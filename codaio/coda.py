@@ -519,7 +519,7 @@ class Coda:
         """
         return self.post(f"/docs/{doc_id}/tables/{table_id_or_name}/rows", data)
 
-    def get_row(self, doc_id: str, table_id_or_name: str, row_id_or_name: str) -> Dict:
+    def get_row(self, doc_id: str, table_id_or_name: str, row_id_or_name: str, data: Dict = None) -> Dict:
         """
         Returns details about a row in a table.
 
@@ -538,7 +538,7 @@ class Coda:
             an arbitrary one will be selected.
         """
         return self.get(
-            f"/docs/{doc_id}/tables/{table_id_or_name}/rows/{row_id_or_name}"
+            f"/docs/{doc_id}/tables/{table_id_or_name}/rows/{row_id_or_name}", data=data
         )
 
     def update_row(
