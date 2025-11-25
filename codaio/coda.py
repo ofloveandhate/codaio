@@ -449,6 +449,7 @@ class Coda:
         limit: int = None,
         offset: int = None,
         sync_token: str = None,
+        data: Dict = None
     ) -> Dict:
         """
         Returns a list of rows in a table.
@@ -478,8 +479,15 @@ class Coda:
         :param sync_token: An opaque token returned from a previous call that
             can be used to return results that are relevant to the query since
             the call where the syncToken was generated..
+
+        :param: data: A dict of additional parameters to use in the get call.
         """
-        data = {"useColumnNames": use_column_names}
+
+        if data is None:
+            data = {"useColumnNames": use_column_names}
+        else:
+            data["useColumnNames"]  = use_column_names  
+
         if query:
             data["query"] = query
 
@@ -871,7 +879,7 @@ class Table(CodaObject):
             ]
         return self.columns_storage
 
-    def rows(self, offset: int = None, limit: int = None) -> List[Row]:
+    def rows(self, offset: int = None, limit: int = None, data: Dict = None) -> List[Row]:
         """
         Returns list of Table rows.
 
@@ -884,7 +892,7 @@ class Table(CodaObject):
         return [
             Row.from_json({"table": self, **i}, document=self.document)
             for i in self.document.coda.list_rows(
-                self.document.id, self.id, offset=offset, limit=limit
+                self.document.id, self.id, offset=offset, limit=limit, data=data
             )["items"]
         ]
 
