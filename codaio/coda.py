@@ -719,6 +719,14 @@ class CodaObject:
                 js.pop(key)
         return cls(**js, document=document)
 
+    def meta_to_dict(self, incl_doc=False) -> Dict:
+        """ return the metdata about this CodaObject as a dict. 
+        Expected that derived types will also call this function."""
+
+        meta = {'id':self.id,'type':self.type,'href':self.href}
+        if incl_doc: meta['doc'] = self.document
+
+        return meta
 
 @attr.s(hash=True)
 class Document:
@@ -733,6 +741,26 @@ class Document:
     updated_at: dt.datetime = attr.ib(init=False, repr=False)
     browser_link: str = attr.ib(init=False)
     coda: Coda = attr.ib(repr=False)
+
+    def meta_to_dict(self, incl_coda=False) -> Dict:
+        """
+        product a dict of the metadata for the Document.  Omits the Coda object by default.  
+        """
+        # meta_super = super().meta_to_dict() ## currently no super for the Document class...
+
+        meta = {'id': self.id,
+                'type': self.type,
+                'href': self.href,
+                'name': self.name,
+                'owner': self.owner,
+                'created_at': self.created_at,
+                'updated_at': self.updated_at,
+                'browser_link': self.browser_link}
+
+        if incl_coda:
+            meta['coda'] = self.coda
+
+        return meta
 
     @classmethod
     def from_environment(cls, doc_id: str):
@@ -838,6 +866,27 @@ class Table(CodaObject):
     filter: Dict = attr.ib(default=None, repr=False)
     parent_table: Table = attr.ib(default=None, repr=False)
     view_id: str = attr.ib(default=None, repr=False)
+
+    def meta_to_dict(self, incl_doc=False) -> Dict:
+        """
+        product a dict of the metadata for the table.  Omits the Document by default.  
+        """
+        meta_super = super().meta_to_dict(incl_doc)
+
+        meta = {'name': self.name,
+                'display_column': self.display_column,
+                'browser_link': self.browser_link,
+                'row_count': self.row_count,
+                'sorts': self.sorts,
+                'layout': self.layout,
+                'table_type': self.table_type,
+                'created_at': self.created_at,
+                'updated_at': self.updated_at,
+                'filter': self.filter,
+                'parent_table': self.parent_table,
+                'view_id': self.view_id}
+
+        return meta_super | meta # using https://peps.python.org/pep-0584/
 
     def __getitem__(self, item):
         """
@@ -1094,6 +1143,23 @@ class Column(CodaObject):
     formula: str = attr.ib(default=None, repr=False)
     default_value: str = attr.ib(default=None, repr=False)
 
+    def meta_to_dict(self, incl_table=False) -> Dict:
+        """
+        product a dict of the metadata for the column.  Omits the table by default.  
+        """
+        meta_super = super().meta_to_dict()
+
+        meta = {'name': self.name,
+                'display': self.display,
+                'calculated': self.calculated,
+                'formula': self.formula,
+                'default_value': self.default_value}
+
+        if incl_table:
+            meta['table'] = self.table
+
+        return meta_super | meta # using https://peps.python.org/pep-0584/
+
 
 @attr.s(auto_attribs=True, hash=True)
 class Row(CodaObject):
@@ -1108,6 +1174,27 @@ class Row(CodaObject):
     )
     table: Table = attr.ib(repr=False)
     browser_link: str = attr.ib(default=None, repr=False)
+
+
+    def meta_to_dict(self, incl_table=False) -> Dict:
+        """
+        product a dict of the metadata for the row.  Omits the table by default.  
+        Does not include `values`, cuz those are not metadata, but the data itself.
+        """
+        meta_super = super().meta_to_dict()
+
+        meta = {'name':self.name,
+                'created_at':self.created_at,
+                'index': self.index,
+                'updated_at': self.updated_at,
+                'browser_link': self.browser_link
+                } 
+
+        if incl_table:
+            meta['table'] = self.table
+
+        return meta_super | meta # using https://peps.python.org/pep-0584/
+
 
     def columns(self):
         return self.table.columns()
