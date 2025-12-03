@@ -326,7 +326,7 @@ class Coda:
         """
         return self.get(f"/docs/{doc_id}/folders/{folder_id_or_name}")
 
-    def list_tables(self, doc_id: str, offset: int = None, limit: int = None) -> Dict:
+    def list_tables(self, doc_id: str, offset: int = None, limit: int = None, data: Dict = None) -> Dict:
         """
         Returns a list of tables in a Coda doc.
 
@@ -337,12 +337,15 @@ class Coda:
         :param limit: Maximum number of results to return in this query.
 
         :param offset: An opaque token used to fetch the next page of results.
-
+        
+        :param data: A dict of additional options/parameters to use in the query
         :return:
         """
-        return self.get(f"/docs/{doc_id}/tables", offset=offset, limit=limit)
+        response = self.get(f"/docs/{doc_id}/tables", offset=offset, limit=limit, data=data)
+        print(f'list_tables response: {response}')
+        return response
 
-    def get_table(self, doc_id: str, table_id_or_name: str) -> Dict:
+    def get_table(self, doc_id: str, table_id_or_name: str, data: Dict = None) -> Dict:
         """
         Returns details about a specific table.
 
@@ -353,12 +356,16 @@ class Coda:
         :param table_id_or_name: ID or name of the table.
             Names are discouraged because they're easily prone to being changed by users.
             If you're using a name, be sure to URI-encode it. Example: "grid-pqRst-U"
+        
+        :param data: A dict of additional options/parameters to use in the query
 
         :return:
         """
-        return self.get(f"/docs/{doc_id}/tables/{table_id_or_name}")
+        response = self.get(f"/docs/{doc_id}/tables/{table_id_or_name}", data=data)
+        print(f'get_table response: {response}')
+        return response
 
-    def list_views(self, doc_id: str, offset: int = None, limit: int = None) -> Dict:
+    def list_views(self, doc_id: str, offset: int = None, limit: int = None, data: Dict = None) -> Dict:
         """
         Returns a list of views in a Coda doc.
 
@@ -369,11 +376,13 @@ class Coda:
         :param limit: Maximum number of results to return in this query.
 
         :param offset: An opaque token used to fetch the next page of results.
+        
+        :param data: A dict of additional options/parameters to use in the query
 
         :return:
         """
         return self.get(
-            f"/docs/{doc_id}/tables?tableTypes=view", offset=offset, limit=limit
+            f"/docs/{doc_id}/tables?tableTypes=view", offset=offset, limit=limit, data=data
         )
 
     def get_view(self, doc_id: str, view_id_or_name: str) -> Dict:
@@ -802,20 +811,22 @@ class Document:
             ]
         ]
 
-    def list_tables(self, offset: int = None, limit: int = None) -> List[Table]:
+    def list_tables(self, offset: int = None, limit: int = None, data: Dict = None) -> List[Table]:
         """
         Returns a list of `Table` objects for each table in the document.
 
         :param limit: Maximum number of results to return in this query.
 
         :param offset: An opaque token used to fetch the next page of results.
-
+        
+        :param data: A dict of additional options/parameters to use in the query
+        
         :return:
         """
 
         return [
             Table.from_json(i, document=self)
-            for i in self.coda.list_tables(self.id, offset=offset, limit=limit)["items"]
+            for i in self.coda.list_tables(self.id, offset=offset, limit=limit, data=data)["items"]
         ]
 
     def get_table(self, table_id_or_name: str) -> Table:
