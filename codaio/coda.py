@@ -342,7 +342,6 @@ class Coda:
         :return:
         """
         response = self.get(f"/docs/{doc_id}/tables", offset=offset, limit=limit, data=data)
-        print(f'list_tables response: {response}')
         return response
 
     def get_table(self, doc_id: str, table_id_or_name: str, data: Dict = None) -> Dict:
@@ -362,7 +361,6 @@ class Coda:
         :return:
         """
         response = self.get(f"/docs/{doc_id}/tables/{table_id_or_name}", data=data)
-        print(f'get_table response: {response}')
         return response
 
     def list_views(self, doc_id: str, offset: int = None, limit: int = None, data: Dict = None) -> Dict:
