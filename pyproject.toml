@@ -1,12 +1,12 @@
 [tool.poetry]
 name = "codaio"
-version = "0.6.12"
+version = "0.7.0"
 description = "Python wrapper for Coda.io API"
-authors = ["MB <mb@blaster.ai>"]
+authors = ["MB <mb@blaster.ai>", "silviana amethyst started modifying in fall 2025 <amethyst@mpi-cbg.de>"]
 license = "MIT"
 readme='README.md'
-homepage='https://github.com/Blasterai/codaio'
-documentation='https://codaio.readthedocs.io/en/latest/index.html'
+homepage='https://github.com/ofloveandhate/codaio'
+documentation=''#'https://codaio.readthedocs.io/en/latest/index.html'
 
 [tool.poetry.dependencies]
 python = "^3.9"
