@@ -16,14 +16,20 @@
 - `codaio.credentials`, which resolves the API token through a short chain:
   explicit argument, then `CODA_API_KEY_<PROFILE>`, then `CODA_API_KEY`, then
   the OS keyring. Usable on its own, without importing the rest of `codaio`.
-- **Profiles**, for keeping a different token per docset. The profile name is
-  the keyring entry's username under the service `codaio`:
+- **Profiles**, for keeping a different token per docset. `keyring` addresses
+  an entry by a (service, username) pair, spelled `keyring_service` and
+  `keyring_profile` here so it is clear they are keyring addressing rather
+  than concepts `Coda` itself has:
 
-      keyring set codaio research
-      Coda(profile="research")
+      python -m keyring set codaio research
+      Coda(keyring_profile="research")
 
-- `Coda()` with no arguments, and `Coda(profile=...)`.
-- `Document.from_credentials(doc_id, profile=...)`.
+  `keyring_service` defaults to `codaio`; set it to read an entry owned by
+  another tool. `CODA_KEYRING_PROFILE` and `CODA_KEYRING_SERVICE` set the
+  defaults from the environment.
+
+- `Coda()` with no arguments, and `Coda(keyring_profile=..., keyring_service=...)`.
+- `Document.from_credentials(doc_id, keyring_profile=..., keyring_service=...)`.
 - `Coda.source` records which mechanism supplied the token.
 - `keyring` is now a **required** dependency, not an extra, so a plain
   `pip install codaio` gives you the recommended setup with nothing else to

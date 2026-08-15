@@ -17,7 +17,7 @@ that -- the profile name is the keyring entry's username under the service
 ``codaio``, so what you type is what shows up in Seahorse::
 
     keyring set codaio research
-    Coda(profile="research")
+    Coda(keyring_profile="research")
 
 This module deliberately does not import :mod:`codaio.coda`, both to avoid a
 circular import and so other tools can depend on the resolution logic alone.
@@ -33,13 +33,15 @@ from typing import List, NamedTuple, Optional
 
 from codaio import err
 
-SERVICE = "codaio"
-DEFAULT_PROFILE = "default"
+DEFAULT_KEYRING_SERVICE = "codaio"
+SERVICE = DEFAULT_KEYRING_SERVICE  # backwards-compatible alias
+DEFAULT_KEYRING_PROFILE = "default"
 
 ENV_API_KEY = "CODA_API_KEY"
-ENV_PROFILE = "CODA_PROFILE"
+ENV_KEYRING_PROFILE = "CODA_KEYRING_PROFILE"
 ENV_ENDPOINT = "CODA_API_ENDPOINT"
 ENV_DOTENV = "CODAIO_DOTENV"
+ENV_KEYRING_SERVICE = "CODA_KEYRING_SERVICE"
 ENV_ALLOW_INSECURE_KEYRING = "CODAIO_ALLOW_INSECURE_KEYRING"
 
 DEFAULT_ENDPOINT = "https://coda.io/apis/v1"
@@ -101,14 +103,18 @@ class Resolution(NamedTuple):
     source: str
 
 
-def default_profile(profile: Optional[str] = None) -> str:
-    """Explicit argument, else ``CODA_PROFILE``, else ``"default"``."""
-    return profile or os.environ.get(ENV_PROFILE) or DEFAULT_PROFILE
+def default_keyring_profile(keyring_profile: Optional[str] = None) -> str:
+    """Explicit argument, else ``CODA_KEYRING_PROFILE``, else ``"default"``."""
+    return (
+        keyring_profile
+        or os.environ.get(ENV_KEYRING_PROFILE)
+        or DEFAULT_KEYRING_PROFILE
+    )
 
 
-def profile_env_var(profile: str) -> str:
+def keyring_profile_env_var(keyring_profile: str) -> str:
     """Per-profile override variable, e.g. ``research`` -> ``CODA_API_KEY_RESEARCH``."""
-    slug = re.sub(r"[^0-9A-Za-z]+", "_", profile).strip("_").upper()
+    slug = re.sub(r"[^0-9A-Za-z]+", "_", keyring_profile).strip("_").upper()
     return f"{ENV_API_KEY}_{slug}"
 
 
@@ -195,7 +201,18 @@ def _warn_insecure_backend_once(status: KeyringStatus) -> None:
     )
 
 
-def _from_keyring(profile: str, attempts: List[Attempt]) -> Optional[str]:
+def default_keyring_service(keyring_service: Optional[str] = None) -> str:
+    """Explicit argument, else ``CODA_KEYRING_SERVICE``, else ``"codaio"``."""
+    return (
+        keyring_service
+        or os.environ.get(ENV_KEYRING_SERVICE)
+        or DEFAULT_KEYRING_SERVICE
+    )
+
+
+def _from_keyring(
+    keyring_service: str, keyring_profile: str, attempts: List[Attempt]
+) -> Optional[str]:
     keyring = _import_keyring()
     if keyring is None:
         attempts.append(
@@ -208,7 +225,7 @@ def _from_keyring(profile: str, attempts: List[Attempt]) -> Optional[str]:
 
     status = keyring_status()
     try:
-        value = keyring.get_password(SERVICE, profile)
+        value = keyring.get_password(keyring_service, keyring_profile)
     except Exception as exc:
         # Never let a keyring problem break resolution -- a locked collection
         # or a dead dbus surfaces as anything from KeyringError to RuntimeError.
@@ -217,7 +234,11 @@ def _from_keyring(profile: str, attempts: List[Attempt]) -> Optional[str]:
 
     if not value:
         attempts.append(
-            Attempt("OS keyring", f"no entry for '{profile}' (keyring set {SERVICE} {profile})")
+            Attempt(
+                "OS keyring",
+                f"no entry for '{keyring_service}'/'{keyring_profile}' "
+                f"(python -m keyring set {keyring_service} {keyring_profile})",
+            )
         )
         return None
 
@@ -226,31 +247,40 @@ def _from_keyring(profile: str, attempts: List[Attempt]) -> Optional[str]:
     return value
 
 
-def _no_api_key_error(profile: str, attempts: List[Attempt]) -> err.NoApiKey:
+def _no_api_key_error(
+    keyring_service: str, keyring_profile: str, attempts: List[Attempt]
+) -> err.NoApiKey:
     width = max(len(a.mechanism) for a in attempts)
     tried = "\n".join(f"  {a.mechanism:<{width}}  - {a.detail}" for a in attempts)
-    env_var = ENV_API_KEY if profile == DEFAULT_PROFILE else profile_env_var(profile)
+    env_var = ENV_API_KEY if keyring_profile == DEFAULT_KEYRING_PROFILE else keyring_profile_env_var(keyring_profile)
     return err.NoApiKey(
-        f"No Coda API token found for profile '{profile}'. Tried:\n"
+        f"No Coda API token found for profile '{keyring_profile}'. Tried:\n"
         f"{tried}\n\n"
         f"Fix with either:\n"
-        f"  keyring set {SERVICE} {profile}\n"
+        f"  python -m keyring set {keyring_service} {keyring_profile}\n"
         f"  export {env_var}=...\n"
         f"Get a token at {TOKEN_URL}"
     )
 
 
 def get_api_key_with_source(
-    api_key: Optional[str] = None, *, profile: Optional[str] = None
+    api_key: Optional[str] = None,
+    *,
+    keyring_profile: Optional[str] = None,
+    keyring_service: Optional[str] = None,
 ) -> Resolution:
     """
     Resolve the token and report where it came from.
 
     :param api_key: an explicit token, which always wins if given.
-    :param profile: which stored token to use; see :func:`default_profile`.
+    :param keyring_profile: which stored token to use. This is the keyring entry's
+        *username*; see :func:`default_keyring_profile`.
+    :param keyring_service: the keyring entry's *service* name. Defaults to
+        ``"codaio"``; override it to read an entry stored by something else.
     :raises codaio.err.NoApiKey: if no mechanism supplied a token.
     """
-    profile = default_profile(profile)
+    keyring_profile = default_keyring_profile(keyring_profile)
+    keyring_service = default_keyring_service(keyring_service)
     attempts: List[Attempt] = []
 
     if api_key:
@@ -260,8 +290,8 @@ def get_api_key_with_source(
     # The plain CODA_API_KEY already covers the default profile; a
     # CODA_API_KEY_DEFAULT alongside it would just be a confusing second
     # spelling of the same thing.
-    if profile != DEFAULT_PROFILE:
-        per_profile = profile_env_var(profile)
+    if keyring_profile != DEFAULT_KEYRING_PROFILE:
+        per_profile = keyring_profile_env_var(keyring_profile)
         value = os.environ.get(per_profile)
         if value:
             return Resolution(value, per_profile)
@@ -272,29 +302,38 @@ def get_api_key_with_source(
         return Resolution(value, ENV_API_KEY)
     attempts.append(Attempt(ENV_API_KEY, "not set"))
 
-    value = _from_keyring(profile, attempts)
+    value = _from_keyring(keyring_service, keyring_profile, attempts)
     if value:
-        return Resolution(value, f"keyring[{profile}]")
+        return Resolution(value, f"keyring[{keyring_service}/{keyring_profile}]")
 
-    raise _no_api_key_error(profile, attempts)
+    raise _no_api_key_error(keyring_service, keyring_profile, attempts)
 
 
-def get_api_key(api_key: Optional[str] = None, *, profile: Optional[str] = None) -> str:
+def get_api_key(
+    api_key: Optional[str] = None,
+    *,
+    keyring_profile: Optional[str] = None,
+    keyring_service: Optional[str] = None,
+) -> str:
     """Resolve the token. See :func:`get_api_key_with_source`."""
-    return get_api_key_with_source(api_key, profile=profile).api_key
+    return get_api_key_with_source(
+        api_key, keyring_profile=keyring_profile, keyring_service=keyring_service
+    ).api_key
 
 
 def store_api_key(
     api_key: str,
     *,
-    profile: Optional[str] = None,
+    keyring_profile: Optional[str] = None,
+    keyring_service: Optional[str] = None,
     allow_insecure_backend: bool = False,
 ) -> str:
     """
     Write a token into the OS keyring.
 
-    ``keyring set codaio <profile>`` does the same thing from a shell; this
-    exists so other tools can migrate stored credentials programmatically.
+    ``python -m keyring set <service> <profile>`` does the same thing from a
+    shell; this exists so other tools can migrate stored credentials
+    programmatically.
 
     Refuses to write to a backend that does not encrypt at rest, since doing
     so would silently defeat the point of using a keyring at all.
@@ -306,7 +345,8 @@ def store_api_key(
     if not api_key:
         raise ValueError("refusing to store an empty API key")
 
-    profile = default_profile(profile)
+    keyring_profile = default_keyring_profile(keyring_profile)
+    keyring_service = default_keyring_service(keyring_service)
     keyring = _import_keyring()
     if keyring is None:
         raise err.InsecureKeyringBackend(
@@ -320,24 +360,30 @@ def store_api_key(
         raise err.InsecureKeyringBackend(
             f"refusing to store the Coda token in {status.backend}: "
             f"{status.reason}. Storing it here would not be encrypted at rest. "
-            f"Use the {profile_env_var(profile)} environment variable instead, "
+            f"Use the {keyring_profile_env_var(keyring_profile)} environment variable instead, "
             f"or pass allow_insecure_backend=True to override."
         )
 
-    keyring.set_password(SERVICE, profile, api_key)
-    return f"keyring[{profile}] via {status.backend} ({fingerprint(api_key)})"
+    keyring.set_password(keyring_service, keyring_profile, api_key)
+    return (
+        f"keyring[{keyring_service}/{keyring_profile}] via {status.backend} "
+        f"({fingerprint(api_key)})"
+    )
 
 
-def delete_api_key(*, profile: Optional[str] = None) -> bool:
+def delete_api_key(
+    *, keyring_profile: Optional[str] = None, keyring_service: Optional[str] = None
+) -> bool:
     """Remove a stored token. Returns False if there was nothing to remove."""
-    profile = default_profile(profile)
+    keyring_profile = default_keyring_profile(keyring_profile)
+    keyring_service = default_keyring_service(keyring_service)
     keyring = _import_keyring()
     if keyring is None:
         return False
     try:
-        if not keyring.get_password(SERVICE, profile):
+        if not keyring.get_password(keyring_service, keyring_profile):
             return False
-        keyring.delete_password(SERVICE, profile)
+        keyring.delete_password(keyring_service, keyring_profile)
     except Exception:
         return False
     return True

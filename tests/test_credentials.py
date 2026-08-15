@@ -10,21 +10,21 @@ PLAINTEXT_BACKEND = "keyrings.alt.file.PlaintextKeyring"
 
 class TestProfiles:
     def test_default_profile_precedence(self, monkeypatch):
-        assert credentials.default_profile() == "default"
-        monkeypatch.setenv("CODA_PROFILE", "from-env")
-        assert credentials.default_profile() == "from-env"
-        assert credentials.default_profile("explicit") == "explicit"
+        assert credentials.default_keyring_profile() == "default"
+        monkeypatch.setenv("CODA_KEYRING_PROFILE", "from-env")
+        assert credentials.default_keyring_profile() == "from-env"
+        assert credentials.default_keyring_profile("explicit") == "explicit"
 
     @pytest.mark.parametrize(
-        "profile,expected",
+        "keyring_profile,expected",
         [
             ("research", "CODA_API_KEY_RESEARCH"),
             ("my-docs", "CODA_API_KEY_MY_DOCS"),
             ("a.b c", "CODA_API_KEY_A_B_C"),
         ],
     )
-    def test_profile_env_var_slugging(self, profile, expected):
-        assert credentials.profile_env_var(profile) == expected
+    def test_profile_env_var_slugging(self, keyring_profile, expected):
+        assert credentials.keyring_profile_env_var(keyring_profile) == expected
 
     def test_default_profile_ignores_suffixed_variable(self, monkeypatch):
         # The plain CODA_API_KEY covers the default profile; honouring a
@@ -48,12 +48,12 @@ class TestPrecedence:
     def test_per_profile_env_beats_plain_env(self, monkeypatch):
         monkeypatch.setenv("CODA_API_KEY", "plain")
         monkeypatch.setenv("CODA_API_KEY_RESEARCH", "specific")
-        resolution = credentials.get_api_key_with_source(profile="research")
+        resolution = credentials.get_api_key_with_source(keyring_profile="research")
         assert resolution == ("specific", "CODA_API_KEY_RESEARCH")
 
     def test_plain_env_used_when_no_profile_specific_one(self, monkeypatch):
         monkeypatch.setenv("CODA_API_KEY", "plain")
-        resolution = credentials.get_api_key_with_source(profile="research")
+        resolution = credentials.get_api_key_with_source(keyring_profile="research")
         assert resolution == ("plain", "CODA_API_KEY")
 
     def test_env_beats_keyring(self, monkeypatch, fake_keyring):
@@ -63,19 +63,64 @@ class TestPrecedence:
 
     def test_keyring_used_when_env_empty(self, fake_keyring):
         fake_keyring.set_password("codaio", "research", TOKEN)
-        resolution = credentials.get_api_key_with_source(profile="research")
-        assert resolution == (TOKEN, "keyring[research]")
+        resolution = credentials.get_api_key_with_source(keyring_profile="research")
+        assert resolution == (TOKEN, "keyring[codaio/research]")
 
     def test_profiles_are_independent(self, fake_keyring):
         fake_keyring.set_password("codaio", "research", "key-a")
         fake_keyring.set_password("codaio", "teaching", "key-b")
-        assert credentials.get_api_key(profile="research") == "key-a"
-        assert credentials.get_api_key(profile="teaching") == "key-b"
+        assert credentials.get_api_key(keyring_profile="research") == "key-a"
+        assert credentials.get_api_key(keyring_profile="teaching") == "key-b"
 
     def test_profile_from_environment(self, monkeypatch, fake_keyring):
         fake_keyring.set_password("codaio", "research", TOKEN)
-        monkeypatch.setenv("CODA_PROFILE", "research")
+        monkeypatch.setenv("CODA_KEYRING_PROFILE", "research")
         assert credentials.get_api_key() == TOKEN
+
+
+class TestService:
+    def test_default_service_precedence(self, monkeypatch):
+        assert credentials.default_keyring_service() == "codaio"
+        monkeypatch.setenv("CODA_KEYRING_SERVICE", "from-env")
+        assert credentials.default_keyring_service() == "from-env"
+        assert credentials.default_keyring_service("explicit") == "explicit"
+
+    def test_reads_entry_under_a_custom_service(self, fake_keyring):
+        fake_keyring.set_password("coda_backup", "research", TOKEN)
+        resolution = credentials.get_api_key_with_source(
+            keyring_profile="research", keyring_service="coda_backup"
+        )
+        assert resolution == (TOKEN, "keyring[coda_backup/research]")
+
+    def test_services_are_independent(self, fake_keyring):
+        fake_keyring.set_password("codaio", "research", "key-a")
+        fake_keyring.set_password("coda_backup", "research", "key-b")
+        assert credentials.get_api_key(keyring_profile="research") == "key-a"
+        assert (
+            credentials.get_api_key(keyring_profile="research", keyring_service="coda_backup")
+            == "key-b"
+        )
+
+    def test_store_and_delete_honour_service(self, fake_keyring):
+        credentials.store_api_key(TOKEN, keyring_profile="research", keyring_service="coda_backup")
+        assert fake_keyring.store[("coda_backup", "research")] == TOKEN
+        # The default service must not see it.
+        with pytest.raises(err.NoApiKey):
+            credentials.get_api_key(keyring_profile="research")
+        assert credentials.delete_api_key(
+            keyring_profile="research", keyring_service="coda_backup"
+        ) is True
+
+    def test_coda_accepts_service(self, fake_keyring):
+        fake_keyring.set_password("coda_backup", "research", TOKEN)
+        coda = Coda(keyring_profile="research", keyring_service="coda_backup")
+        assert coda.api_key == TOKEN
+        assert coda.keyring_service == "coda_backup"
+
+    def test_error_names_the_service_actually_used(self):
+        with pytest.raises(err.NoApiKey) as excinfo:
+            credentials.get_api_key(keyring_profile="research", keyring_service="coda_backup")
+        assert "keyring set coda_backup research" in str(excinfo.value)
 
 
 class TestExhaustedChain:
@@ -85,7 +130,7 @@ class TestExhaustedChain:
 
     def test_message_names_every_mechanism(self):
         with pytest.raises(err.NoApiKey) as excinfo:
-            credentials.get_api_key(profile="research")
+            credentials.get_api_key(keyring_profile="research")
         message = str(excinfo.value)
         for mechanism in (
             "explicit argument",
@@ -143,21 +188,21 @@ class TestBackendSafety:
     @pytest.mark.parametrize("fake_keyring", [PLAINTEXT_BACKEND], indirect=True)
     def test_store_refuses_insecure_backend(self, fake_keyring):
         with pytest.raises(err.InsecureKeyringBackend) as excinfo:
-            credentials.store_api_key(TOKEN, profile="research")
+            credentials.store_api_key(TOKEN, keyring_profile="research")
         assert PLAINTEXT_BACKEND in str(excinfo.value)
         assert fake_keyring.store == {}
 
     @pytest.mark.parametrize("fake_keyring", [PLAINTEXT_BACKEND], indirect=True)
     def test_store_override_argument(self, fake_keyring):
         credentials.store_api_key(
-            TOKEN, profile="research", allow_insecure_backend=True
+            TOKEN, keyring_profile="research", allow_insecure_backend=True
         )
         assert fake_keyring.store[("codaio", "research")] == TOKEN
 
     @pytest.mark.parametrize("fake_keyring", [PLAINTEXT_BACKEND], indirect=True)
     def test_store_override_env_var(self, monkeypatch, fake_keyring):
         monkeypatch.setenv("CODAIO_ALLOW_INSECURE_KEYRING", "1")
-        credentials.store_api_key(TOKEN, profile="research")
+        credentials.store_api_key(TOKEN, keyring_profile="research")
         assert fake_keyring.store[("codaio", "research")] == TOKEN
 
     @pytest.mark.parametrize("fake_keyring", [PLAINTEXT_BACKEND], indirect=True)
@@ -229,10 +274,10 @@ class TestBackendSafety:
 
 class TestStoreAndDelete:
     def test_round_trip(self, fake_keyring):
-        credentials.store_api_key(TOKEN, profile="research")
-        assert credentials.get_api_key(profile="research") == TOKEN
-        assert credentials.delete_api_key(profile="research") is True
-        assert credentials.delete_api_key(profile="research") is False
+        credentials.store_api_key(TOKEN, keyring_profile="research")
+        assert credentials.get_api_key(keyring_profile="research") == TOKEN
+        assert credentials.delete_api_key(keyring_profile="research") is True
+        assert credentials.delete_api_key(keyring_profile="research") is False
 
     def test_refuses_empty_token(self, fake_keyring):
         with pytest.raises(ValueError):
@@ -254,16 +299,16 @@ class TestNoTokenLeaks:
         assert credentials.fingerprint(TOKEN) != credentials.fingerprint("other")
 
     def test_store_description_hides_token(self, fake_keyring):
-        self._assert_clean(credentials.store_api_key(TOKEN, profile="research"))
+        self._assert_clean(credentials.store_api_key(TOKEN, keyring_profile="research"))
 
     def test_error_message_hides_token(self, monkeypatch):
         monkeypatch.setenv("CODA_API_KEY_OTHER", TOKEN)
         with pytest.raises(err.NoApiKey) as excinfo:
-            credentials.get_api_key(profile="research")
+            credentials.get_api_key(keyring_profile="research")
         self._assert_clean(str(excinfo.value))
 
     def test_coda_repr_hides_token(self):
-        self._assert_clean(repr(Coda(TOKEN, profile="research")))
+        self._assert_clean(repr(Coda(TOKEN, keyring_profile="research")))
 
     def test_resolution_source_hides_token(self, monkeypatch):
         monkeypatch.setenv("CODA_API_KEY", TOKEN)
@@ -323,13 +368,13 @@ class TestCodaIntegration:
 
     def test_from_environment_with_profile(self, fake_keyring):
         fake_keyring.set_password("codaio", "research", TOKEN)
-        assert Coda.from_environment(profile="research").api_key == TOKEN
+        assert Coda.from_environment(keyring_profile="research").api_key == TOKEN
 
     def test_profile_recorded_on_instance(self, fake_keyring):
         fake_keyring.set_password("codaio", "research", TOKEN)
-        coda = Coda(profile="research")
-        assert coda.profile == "research"
-        assert coda.source == "keyring[research]"
+        coda = Coda(keyring_profile="research")
+        assert coda.keyring_profile == "research"
+        assert coda.source == "keyring[codaio/research]"
 
     def test_no_credentials_raises(self):
         with pytest.raises(err.NoApiKey):

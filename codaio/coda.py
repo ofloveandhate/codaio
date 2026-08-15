@@ -73,20 +73,26 @@ class Coda:
     Can also be used by itself to access Raw API.
 
     With no arguments the API token is resolved from the environment or the
-    OS keyring; see :mod:`codaio.credentials`. Pass `profile` to select
-    between several stored tokens, e.g. one per docset::
+    OS keyring; see :mod:`codaio.credentials`.
 
-        keyring set codaio research
-        coda = Coda(profile="research")
+    `keyring_service` and `keyring_profile` are the two coordinates the
+    `keyring` package uses to address an entry -- its service name and its
+    username. They are named that way to make clear they are keyring
+    addressing, not concepts `Coda` itself has. Use them to keep a different
+    token per docset::
+
+        python -m keyring set codaio research
+        coda = Coda(keyring_profile="research")
     """
 
     api_key: str = attr.ib(default=None, repr=False)
     href: str = attr.ib(default=None, repr=False)
-    profile: str = attr.ib(default=None)
+    keyring_profile: str = attr.ib(default=None)
+    keyring_service: str = attr.ib(default=None)
     source: str = attr.ib(default=None, init=False, eq=False, repr=False)
 
     @classmethod
-    def from_environment(cls, profile: str = None) -> Coda:
+    def from_environment(cls, keyring_profile: str = None) -> Coda:
         """
         Instantiates Coda using a stored API key.
 
@@ -95,17 +101,18 @@ class Coda:
         finds a token in the OS keyring. Every case that worked before still
         works identically; plain `Coda()` is the preferred spelling now.
 
-        :param profile: which stored token to use.
+        :param keyring_profile: which stored token to use.
 
         :return:
         """
-        return cls(profile=profile)
+        return cls(keyring_profile=keyring_profile)
 
     def __attrs_post_init__(self):
         self.api_key, self.source = credentials.get_api_key_with_source(
-            self.api_key, profile=self.profile
+            self.api_key, keyring_profile=self.keyring_profile, keyring_service=self.keyring_service
         )
-        self.profile = credentials.default_profile(self.profile)
+        self.keyring_profile = credentials.default_keyring_profile(self.keyring_profile)
+        self.keyring_service = credentials.default_keyring_service(self.keyring_service)
         self.href = credentials.resolve_endpoint(self.href)
 
     @property
@@ -789,35 +796,45 @@ class Document:
         return meta
 
     @classmethod
-    def from_environment(cls, doc_id: str, profile: str = None):
+    def from_environment(cls, doc_id: str, keyring_profile: str = None):
         """
         Instantiates a `Document` with a stored API key.
 
         :param doc_id: ID of the doc. Example: "AbCDeFGH"
 
-        :param profile: which stored token to use.
+        :param keyring_profile: which stored token to use.
 
         :return:
         """
-        return cls(id=doc_id, coda=Coda.from_environment(profile=profile))
+        return cls(id=doc_id, coda=Coda.from_environment(keyring_profile=keyring_profile))
 
     @classmethod
-    def from_credentials(cls, doc_id: str, profile: str = None):
+    def from_credentials(
+        cls, doc_id: str, keyring_profile: str = None, keyring_service: str = None
+    ):
         """
-        Instantiates a `Document` using the named credentials profile.
+        Instantiates a `Document` using a stored API token.
 
         A more descriptive spelling of `from_environment`, for the common
         case of one API token per docset::
 
-            doc = Document.from_credentials("AbCDeFGH", profile="research")
+            doc = Document.from_credentials("AbCDeFGH", keyring_profile="research")
 
         :param doc_id: ID of the doc. Example: "AbCDeFGH"
 
-        :param profile: which stored token to use.
+        :param keyring_profile: the keyring entry's username.
+
+        :param keyring_service: the keyring entry's service name; defaults
+            to "codaio".
 
         :return:
         """
-        return cls(id=doc_id, coda=Coda(profile=profile))
+        return cls(
+            id=doc_id,
+            coda=Coda(
+                keyring_profile=keyring_profile, keyring_service=keyring_service
+            ),
+        )
 
     def __attrs_post_init__(self):
         self.href = f"/docs/{self.id}"

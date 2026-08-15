@@ -57,7 +57,7 @@ doc = Document('YOUR_DOC_ID', coda=coda)
 doc = Document.from_credentials('YOUR_DOC_ID')
 
 # ...optionally naming which stored token to use
-doc = Document.from_credentials('YOUR_DOC_ID', profile='research')
+doc = Document.from_credentials('YOUR_DOC_ID', keyring_profile='research')
 
 doc.list_tables()
 
@@ -162,7 +162,7 @@ First one found wins:
 | 1 | `Coda("YOUR_API_KEY")` | an explicit argument always wins |
 | 2 | `CODA_API_KEY_<PROFILE>` | e.g. `CODA_API_KEY_RESEARCH`; skipped for the default profile |
 | 3 | `CODA_API_KEY` | |
-| 4 | OS keyring | entry `codaio` / `<profile>` |
+| 4 | OS keyring | entry `<keyring_service>` / `<keyring_profile>`, default `codaio` / `default` |
 
 Environment variables are checked *before* the keyring on purpose: reading a
 locked keyring can pop a blocking desktop password prompt, so an already-set
@@ -189,7 +189,8 @@ refuses to *write* to such a backend, and warns if it reads from one.
 ##### Other variables
 
 * `CODA_API_ENDPOINT` (default `https://coda.io/apis/v1`)
-* `CODA_PROFILE` — default profile name
+* `CODA_KEYRING_PROFILE` — default keyring username
+* `CODA_KEYRING_SERVICE` — default keyring service name (default `codaio`)
 * `CODAIO_DOTENV` — see below
 
 #### Store and retrieve API token using `keyring`
@@ -238,7 +239,7 @@ python -m keyring set codaio teaching
 ```
 
 ```python
-Coda(profile="research")
+Coda(keyring_profile="research")
 Document.from_credentials("YOUR_DOC_ID", profile="teaching")
 ```
 
