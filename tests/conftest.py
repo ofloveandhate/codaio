@@ -47,7 +47,9 @@ def mock_json_response(mocked_responses):
             json_content = json.load(json_file)
 
         method_map = {
-            "ANY": responses.UNSET,
+            # `responses` dropped the public UNSET sentinel; None is the
+            # modern way to say "match any method".
+            "ANY": None,
             "GET": responses.GET,
             "POST": responses.POST,
             "PUT": responses.PUT,
