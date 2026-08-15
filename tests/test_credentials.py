@@ -207,6 +207,25 @@ class TestBackendSafety:
         with pytest.raises(err.InsecureKeyringBackend):
             credentials.store_api_key(TOKEN)
 
+    def test_this_machines_real_backend_is_classified(self, monkeypatch):
+        """
+        The allowlist matches backends by exact dotted name, so a rename
+        upstream -- or a wrong guess about a platform we don't develop on --
+        would silently downgrade a real keyring to "unrecognized" and refuse
+        to store. Run against whatever backend this machine actually has.
+        """
+        monkeypatch.delitem(sys.modules, "keyring", raising=False)
+        pytest.importorskip("keyring")
+
+        status = credentials.keyring_status()
+        assert status.backend is not None
+        assert status.backend in (
+            credentials.SECURE_BACKENDS | set(credentials.INSECURE_BACKENDS)
+        ), (
+            f"{status.backend} is not in either list, so codaio would refuse "
+            f"to store here. Add it to SECURE_BACKENDS or INSECURE_BACKENDS."
+        )
+
 
 class TestStoreAndDelete:
     def test_round_trip(self, fake_keyring):

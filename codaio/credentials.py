@@ -55,6 +55,7 @@ SECURE_BACKENDS = frozenset(
         "keyring.backends.SecretService.Keyring",
         "keyring.backends.libsecret.Keyring",
         "keyring.backends.kwallet.DBusKeyring",
+        "keyring.backends.kwallet.DBusKeyringKWallet4",
         "keyring.backends.macOS.Keyring",
         "keyring.backends.Windows.WinVaultKeyring",
         "keyrings.alt.file.EncryptedKeyring",
