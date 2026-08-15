@@ -9,17 +9,16 @@ import attr
 import inflection
 from dateutil.parser import parse
 from decorator import decorator
-import warnings
-from envparse import env
 
-from codaio import err
+from codaio import credentials, err
 
-with warnings.catch_warnings(record=False):
-    warnings.simplefilter("ignore")
-    env.read_envfile()
+# Previously this module read a `.env` from the current working directory at
+# import time, mutating the whole process environment as a side effect of
+# `import codaio`. That is now opt-in via CODAIO_DOTENV.
+credentials.maybe_load_dotenv()
 
 # Trying to make it compatible with eventlet
-USE_HTTPX = env("USE_HTTPX", cast=bool, default=False)
+USE_HTTPX = credentials.env_bool("USE_HTTPX", False)
 if not USE_HTTPX:
     import requests
 else:
@@ -65,34 +64,54 @@ def handle_response(func, *args, **kwargs) -> Dict:
     )
 
 
-@attr.s(hash=True)
+@attr.s(eq=True, hash=False)
 class Coda:
     """
     Raw API client.
 
     It is used in `codaio` objects like Document to access the raw API endpoints.
     Can also be used by itself to access Raw API.
+
+    With no arguments the API token is resolved from the environment or the
+    OS keyring; see :mod:`codaio.credentials`. Pass `profile` to select
+    between several stored tokens, e.g. one per docset::
+
+        keyring set codaio research
+        coda = Coda(profile="research")
     """
 
-    api_key: str = attr.ib(repr=False)
-    authorization: Dict = attr.ib(init=False, repr=False)
-    href: str = attr.ib(
-        repr=False,
-        default=env("CODA_API_ENDPOINT", cast=str, default="https://coda.io/apis/v1"),
-    )
+    api_key: str = attr.ib(default=None, repr=False)
+    href: str = attr.ib(default=None, repr=False)
+    profile: str = attr.ib(default=None)
+    source: str = attr.ib(default=None, init=False, eq=False, repr=False)
 
     @classmethod
-    def from_environment(cls) -> Coda:
+    def from_environment(cls, profile: str = None) -> Coda:
         """
-        Instantiates Coda using the API key stored in the `CODA_API_KEY` environment variable.
+        Instantiates Coda using a stored API key.
+
+        Historically this read only the `CODA_API_KEY` environment variable.
+        It now goes through the full resolution chain, so it additionally
+        finds a token in the OS keyring. Every case that worked before still
+        works identically; plain `Coda()` is the preferred spelling now.
+
+        :param profile: which stored token to use.
 
         :return:
         """
-        api_key = env("CODA_API_KEY", cast=str)
-        return cls(api_key=api_key)
+        return cls(profile=profile)
 
     def __attrs_post_init__(self):
-        self.authorization = {"Authorization": f"Bearer {self.api_key}"}
+        self.api_key, self.source = credentials.get_api_key_with_source(
+            self.api_key, profile=self.profile
+        )
+        self.profile = credentials.default_profile(self.profile)
+        self.href = credentials.resolve_endpoint(self.href)
+
+    @property
+    def authorization(self) -> Dict:
+        """The Authorization header sent with every request."""
+        return {"Authorization": f"Bearer {self.api_key}"}
 
     @handle_response
     def get(self, endpoint: str, data: Dict = None, limit=None, offset=None) -> Dict:
@@ -770,15 +789,35 @@ class Document:
         return meta
 
     @classmethod
-    def from_environment(cls, doc_id: str):
+    def from_environment(cls, doc_id: str, profile: str = None):
         """
-        Instantiates a `Document` with the API key in the `CODA_API_KEY` environment variable.
+        Instantiates a `Document` with a stored API key.
 
         :param doc_id: ID of the doc. Example: "AbCDeFGH"
 
+        :param profile: which stored token to use.
+
         :return:
         """
-        return cls(id=doc_id, coda=Coda.from_environment())
+        return cls(id=doc_id, coda=Coda.from_environment(profile=profile))
+
+    @classmethod
+    def from_credentials(cls, doc_id: str, profile: str = None):
+        """
+        Instantiates a `Document` using the named credentials profile.
+
+        A more descriptive spelling of `from_environment`, for the common
+        case of one API token per docset::
+
+            doc = Document.from_credentials("AbCDeFGH", profile="research")
+
+        :param doc_id: ID of the doc. Example: "AbCDeFGH"
+
+        :param profile: which stored token to use.
+
+        :return:
+        """
+        return cls(id=doc_id, coda=Coda(profile=profile))
 
     def __attrs_post_init__(self):
         self.href = f"/docs/{self.id}"

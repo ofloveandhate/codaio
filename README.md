@@ -26,11 +26,83 @@ or with `pip`
 pip install codaio
 ```
 
-### Config via environment variables
-The following variables will be called from environment where applicable:
+### Authentication
 
-* `CODA_API_ENDPOINT` (default value `https://coda.io/apis/v1`)
-* `CODA_API_KEY` - your API key to use when initializing client from environment
+Store your API token in the OS keyring, then just construct a client:
+
+```shell script
+keyring set codaio default        # paste your token at the prompt
+```
+
+```python
+from codaio import Coda
+
+coda = Coda()
+```
+
+The keyring keeps the token **encrypted at rest** — on Linux gnome-keyring
+writes it to `~/.local/share/keyrings` encrypted with a key derived from your
+login password, so it is not readable with `cat` and not usable if it gets
+swept into a backup. It does *not* mean the token never touches disk, and it
+is no protection against a process running as you while your session is
+unlocked.
+
+#### Several tokens, one per docset
+
+Use a **profile**. The profile name is the keyring entry's username, so what
+you type is what shows up in Seahorse or `secret-tool search service codaio`:
+
+```shell script
+keyring set codaio research
+keyring set codaio teaching
+```
+
+```python
+Coda(profile="research")
+Document.from_credentials("YOUR_DOC_ID", profile="teaching")
+```
+
+`codaio` does not keep its own list of your profile names — that is what the
+keyring itself is for.
+
+#### Where the token is looked up
+
+First one found wins:
+
+| Order | Source | Notes |
+|---|---|---|
+| 1 | `Coda("YOUR_API_KEY")` | an explicit argument always wins |
+| 2 | `CODA_API_KEY_<PROFILE>` | e.g. `CODA_API_KEY_RESEARCH`; skipped for the default profile |
+| 3 | `CODA_API_KEY` | |
+| 4 | OS keyring | entry `codaio` / `<profile>` |
+
+Environment variables are checked *before* the keyring on purpose: reading a
+locked keyring can pop a blocking desktop password prompt, so an already-set
+variable should short-circuit that. It also means you can override a stored
+token for one run without touching the keyring. `Coda(...).source` tells you
+which one was actually used.
+
+If nothing supplies a token you get a `codaio.err.NoApiKey` listing every
+mechanism it tried and how to fix it.
+
+**On headless servers**, use `CODA_API_KEY` rather than the keyring. With no
+Secret Service running, the `keyring` package silently falls back to a
+backend that stores tokens base64-encoded rather than encrypted — `codaio`
+refuses to *write* to such a backend, and warns if it reads from one.
+
+#### Other variables
+
+* `CODA_API_ENDPOINT` (default `https://coda.io/apis/v1`)
+* `CODA_PROFILE` — default profile name
+* `CODAIO_DOTENV` — see below
+
+#### Breaking change in 0.8.0
+
+Importing `codaio` used to read a `.env` file from the current working
+directory and inject it into the process environment, as a side effect of the
+import. That is gone. To opt back in, set `CODAIO_DOTENV=1` (or to a path)
+and `pip install 'codaio[dotenv]'`, or call
+`codaio.credentials.load_dotenv()` yourself.
 
 ### Quickstart using raw API
 Coda class provides a wrapper for all API methods. If API response included a JSON it will be returned as a dictionary from all methods. If it didn't a dictionary `{"status": response.status_code}` will be returned.
@@ -58,8 +130,11 @@ coda = Coda('YOUR_API_KEY')
 
 doc = Document('YOUR_DOC_ID', coda=coda)
 
-# Or initialiaze from environment by storing your API key in environment variable `CODA_API_KEY`
-doc = Document.from_environment('YOUR_DOC_ID')
+# Or let the token be resolved from the environment or the OS keyring
+doc = Document.from_credentials('YOUR_DOC_ID')
+
+# ...optionally naming which stored token to use
+doc = Document.from_credentials('YOUR_DOC_ID', profile='research')
 
 doc.list_tables()
 

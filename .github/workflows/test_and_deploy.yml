@@ -33,10 +33,10 @@ jobs:
         flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
         # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
         flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+    # No CODA_API_KEY here on purpose. The suite is fully mocked and needs no
+    # real token, and a token in the runner environment would satisfy the
+    # credential resolution chain and mask a bug in the isolation fixtures.
     - name: Test with nox
-      env:
-        CODA_API_KEY: ${{ secrets.CODA_API_KEY }}
-        TEST_DOC_ID: ${{ secrets.TEST_DOC_ID }}
       run: |
         nox
         

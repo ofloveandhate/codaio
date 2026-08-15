@@ -1,13 +1,86 @@
 import pytest
 from pathlib import Path
+import os
+import re
+import sys
 import responses
 import json
 from codaio import Coda, Document
+from codaio import credentials
 
 BASE_URL = "https://coda.io/apis/v1"
 
+# Every environment variable the credential resolver consults.
+CREDENTIAL_ENV_VARS = (
+    "CODA_API_KEY",
+    "CODA_PROFILE",
+    "CODA_API_ENDPOINT",
+    "CODAIO_DOTENV",
+    "CODAIO_ALLOW_INSECURE_KEYRING",
+    "USE_HTTPX",
+)
 
-@pytest.fixture(scope="session")
+
+@pytest.fixture(autouse=True)
+def isolate_credentials(monkeypatch):
+    """
+    Keep the suite away from real credentials.
+
+    Without this a developer with a populated keyring gets different results
+    than CI. Planting None in sys.modules makes `import keyring` raise
+    ImportError, so the default posture is "no keyring installed" and
+    reaching a real Secret Service is impossible rather than just unlikely.
+    Tests that want a keyring opt in via the `fake_keyring` fixture.
+    """
+    for var in CREDENTIAL_ENV_VARS:
+        monkeypatch.delenv(var, raising=False)
+    for var in [v for v in os.environ if re.fullmatch(r"CODA_API_KEY_\w+", v)]:
+        monkeypatch.delenv(var, raising=False)
+
+    monkeypatch.setitem(sys.modules, "keyring", None)
+    monkeypatch.setattr(credentials, "_insecure_backend_warned", False)
+
+
+class FakeKeyring:
+    """Minimal in-memory stand-in for the parts of `keyring` we use."""
+
+    def __init__(self, backend_name):
+        self.store = {}
+        self.backend_name = backend_name
+        self.raises = None
+
+    def get_password(self, service, username):
+        if self.raises:
+            raise self.raises
+        return self.store.get((service, username))
+
+    def set_password(self, service, username, password):
+        self.store[(service, username)] = password
+
+    def delete_password(self, service, username):
+        del self.store[(service, username)]
+
+    def get_keyring(self):
+        module, _, qualname = self.backend_name.rpartition(".")
+        return type(qualname, (), {"__module__": module})()
+
+
+@pytest.fixture
+def fake_keyring(request, monkeypatch):
+    """
+    Install an in-memory keyring. Parametrise with a backend dotted name:
+
+        @pytest.mark.parametrize(
+            "fake_keyring", ["keyrings.alt.file.PlaintextKeyring"], indirect=True
+        )
+    """
+    backend = getattr(request, "param", "keyring.backends.SecretService.Keyring")
+    fake = FakeKeyring(backend)
+    monkeypatch.setitem(sys.modules, "keyring", fake)
+    return fake
+
+
+@pytest.fixture
 def coda():
     API_KEY = "ANY_KEY"
     return Coda(API_KEY)

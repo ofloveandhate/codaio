@@ -1,0 +1,56 @@
+# Changelog
+
+## 0.8.0
+
+### Breaking
+
+- **`import codaio` no longer reads a `.env` file.** Previously the import
+  itself called `envparse`'s `read_envfile()`, which read a `.env` from the
+  *current working directory* and injected it into `os.environ` for the whole
+  process, with warnings suppressed. This was undocumented and surprising.
+  To opt back in, set `CODAIO_DOTENV=1` (or to a path) and install the
+  `dotenv` extra, or call `codaio.credentials.load_dotenv()` explicitly.
+
+### Added
+
+- `codaio.credentials`, which resolves the API token through a short chain:
+  explicit argument, then `CODA_API_KEY_<PROFILE>`, then `CODA_API_KEY`, then
+  the OS keyring. Usable on its own, without importing the rest of `codaio`.
+- **Profiles**, for keeping a different token per docset. The profile name is
+  the keyring entry's username under the service `codaio`:
+
+      keyring set codaio research
+      Coda(profile="research")
+
+- `Coda()` with no arguments, and `Coda(profile=...)`.
+- `Document.from_credentials(doc_id, profile=...)`.
+- `Coda.source` records which mechanism supplied the token.
+- `keyring` is now a **required** dependency, not an extra, so a plain
+  `pip install codaio` gives you the recommended setup with nothing else to
+  remember. On Linux this pulls in SecretStorage and cryptography.
+- Optional extras `dotenv` and `httpx`, both of which only matter if you set
+  `CODAIO_DOTENV` or `USE_HTTPX` respectively. `httpx` declares a dependency
+  the code has always soft-imported but never listed.
+- `err.InsecureKeyringBackend`. `err.NoApiKey` is now actually raised, with a
+  message naming every mechanism that was tried.
+
+### Fixed
+
+- **`Coda` was never hashable.** `@attr.s(hash=True)` included the
+  `authorization` dict in the generated `__hash__`, so `hash(Coda(...))`
+  raised `TypeError: unhashable type: 'dict'` for every instance.
+  `authorization` is now a computed property and the class sets `hash=False`.
+  Nothing that previously worked can break, since nothing could hash a `Coda`.
+- `CODA_API_ENDPOINT` was read at *import* time as an attrs default, so
+  changing the environment afterwards had no effect. It is now read when a
+  `Coda` is constructed.
+- Writing a token to a keyring backend that does not encrypt at rest is now
+  refused rather than done silently. Without a Secret Service available,
+  `keyring` falls back to backends that store secrets base64-encoded; that
+  fallback looks encrypted and is not.
+- The test suite runs again. `responses` removed its public `UNSET` sentinel,
+  which broke 20 of 21 tests at fixture setup.
+
+### Removed
+
+- The `envparse` dependency, unmaintained since 2018.

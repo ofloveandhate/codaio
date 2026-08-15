@@ -6,6 +6,10 @@ class NoApiKey(CodaError):
     pass
 
 
+class InsecureKeyringBackend(CodaError):
+    pass
+
+
 class DocumentNotFound(CodaError):
     pass
 
