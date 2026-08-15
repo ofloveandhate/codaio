@@ -31,7 +31,7 @@ pip install codaio
 Store your API token in the OS keyring, then just construct a client:
 
 ```shell script
-keyring set codaio default        # paste your token at the prompt
+python -m keyring set codaio default    # paste your token at the prompt
 ```
 
 ```python
@@ -39,6 +39,12 @@ from codaio import Coda
 
 coda = Coda()
 ```
+
+`keyring` is installed as a dependency, and `python -m keyring` works the same
+way on Linux, macOS and Windows. It writes to the platform's own secret store:
+Secret Service / KWallet on Linux, Keychain on macOS, Credential Manager on
+Windows. The plain `keyring` command works too, but `python -m keyring`
+guarantees you are using the same environment `codaio` runs in.
 
 The keyring keeps the token **encrypted at rest** — on Linux gnome-keyring
 writes it to `~/.local/share/keyrings` encrypted with a key derived from your
@@ -50,11 +56,11 @@ unlocked.
 #### Several tokens, one per docset
 
 Use a **profile**. The profile name is the keyring entry's username, so what
-you type is what shows up in Seahorse or `secret-tool search service codaio`:
+you type is what shows up in your platform's credential manager:
 
 ```shell script
-keyring set codaio research
-keyring set codaio teaching
+python -m keyring set codaio research
+python -m keyring set codaio teaching
 ```
 
 ```python
@@ -63,7 +69,9 @@ Document.from_credentials("YOUR_DOC_ID", profile="teaching")
 ```
 
 `codaio` does not keep its own list of your profile names — that is what the
-keyring itself is for.
+keyring itself is for. To see what you have stored, use your platform's
+credential manager: Seahorse or `secret-tool search service codaio` on Linux,
+Keychain Access on macOS, Credential Manager on Windows.
 
 #### Where the token is looked up
 
@@ -84,6 +92,14 @@ which one was actually used.
 
 If nothing supplies a token you get a `codaio.err.NoApiKey` listing every
 mechanism it tried and how to fix it.
+
+To see which backend `keyring` resolves to on a given machine, and whether
+`codaio` considers it safe to write to:
+
+```shell script
+python -c "from codaio.credentials import keyring_status; print(keyring_status())"
+python -m keyring --list-backends     # every candidate, with priorities
+```
 
 **On headless servers**, use `CODA_API_KEY` rather than the keyring. With no
 Secret Service running, the `keyring` package silently falls back to a
