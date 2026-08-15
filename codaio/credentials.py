@@ -122,25 +122,23 @@ def fingerprint(api_key: str) -> str:
     """
     A short, stable, non-reversible identifier for a token.
 
-    Safe to print or log, and used instead of showing the first or last few
-    characters: Coda tokens are UUID-shaped, so leaking any real characters
-    narrows a brute-force search, while this leaks none. Two machines holding
-    the same token produce the same fingerprint, which is the point -- it
-    answers "is this the same token I put on the server?".
+    Used instead of showing the first or last few characters of the token,
+    which would leak real material. Two machines holding the same token
+    produce the same fingerprint, which is the point -- it answers "is this
+    the same token I put on the server?".
 
-    On SHA-256 here, since scanners flag it: this is not password hashing.
-    Nothing is stored and nothing is verified against it, so there is no
-    digest for an attacker to crack offline, which is the threat slow KDFs
-    like bcrypt and argon2 exist to address. Those are slow because *human*
-    passwords are low entropy and therefore guessable; a Coda API token is
-    high-entropy random, so it is not reachable by brute force at any hash
-    speed. Same construction as an SSH key fingerprint.
+    CodeQL flags the SHA-256 here as weak hashing of sensitive data. That
+    rule models password storage, where an attacker steals a stored digest
+    and cracks it offline; nothing here is stored or verified against, and
+    the output is truncated to 48 bits, so a preimage search would return a
+    large set of candidates rather than the token.
 
-    Deliberately truncated. Collisions need roughly 2**24 tokens before they
-    are likely, which is far past any plausible number of profiles, and a
-    collision would only ever mean two tokens looked alike in a status line.
-
-    Do not reuse this for anything that verifies a secret.
+    The honest caveat: slow KDFs exist because *human* passwords are
+    guessable, and whether that reasoning lets Coda tokens off the hook
+    depends on their entropy -- which Coda does not document anywhere. So
+    this is a judgement call resting on an unverified assumption, not a
+    settled question. Do not extend the pattern to anything else, and do not
+    reuse this for anything that verifies a secret.
     """
     return "sha256:" + hashlib.sha256(api_key.encode()).hexdigest()[:12]
 
