@@ -264,21 +264,31 @@ and `pip install 'codaio[dotenv]'`, or call
 
 ### Running the tests
 
-The recommended way of running the test suite is to use [nox](https://nox.thea.codes/en/stable/tutorial.html).
+The suite is fully mocked with [responses](https://github.com/getsentry/responses).
+It makes no network calls and needs no API token, so it is safe to run anywhere.
 
-Once `nox`: is installed, just run the following command:
 ```shell script
-nox
+pip install -e .
+pip install pytest responses
+python -m pytest
 ```
 
-The nox session will run the test suite against python 3.8 and 3.7. It will also look for linting errors with `flake8`.
+`tests/__init__.py` puts the repo root on `sys.path`, so `codaio` does not
+strictly have to be installed for the tests to import it.
 
-You can still invoke `pytest` directly with:
+For coverage:
 ```shell script
-poetry run pytest --cov
+pip install pytest-cov
+python -m pytest --cov=codaio --cov-report=term-missing
 ```
 
-Check out the fixtures if you want to improve the testing process.
+CI runs exactly these steps against python 3.10 through 3.13, plus a `flake8`
+gate for syntax errors and undefined names.
+
+Check out the fixtures in `tests/conftest.py` if you want to improve the
+testing process. New tests should reuse `mock_json_response` /
+`mock_json_responses` and the `main_document` / `main_table` fixtures rather
+than build a second mocking style.
 
 
 #### Contributing

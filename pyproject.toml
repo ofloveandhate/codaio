@@ -30,17 +30,20 @@ httpx = {version = "^0.27", optional = true}
 dotenv = ["python-dotenv"]
 httpx = ["httpx"]
 
-[tool.poetry.dev-dependencies]
-pytest = "^7.4.3"
-pydoc-markdown = "^2.0"
-sphinx = "^2.2"
-sphinx_rtd_theme = "^0.4.3"
-pylint = "^2.4.4"
-pytest-coverage = "^0.0"
-coverage = {version = "^5.0.3", extras = ["toml"]}
-black = {version = "^19.10b0", allow-prereleases = true}
-responses = "^0.10.11"
-nox = "^2023.4.22"
+# `dev-dependencies` is the deprecated spelling; this is the group form.
+[tool.poetry.group.dev.dependencies]
+pytest = "^9.0"
+# was `pytest-coverage = "^0.0"`, which is a dummy package on PyPI, not the
+# plugin -- so `pytest --cov` could never have worked
+pytest-cov = "^7.0"
+coverage = {version = "^7.6", extras = ["toml"]}
+responses = ">=0.25"
+# CI installs flake8 ad hoc; declaring it keeps the two in step
+flake8 = "^7.1"
+black = "^26.0"
+# 8.1 is the newest sphinx that still supports 3.10; 8.2+ needs 3.11
+sphinx = "^8.0"
+sphinx-rtd-theme = "^3.0"
 
 [tool.coverage.paths]
 source = ["src", "*/site-packages"]
