@@ -10,6 +10,10 @@ class InsecureKeyringBackend(CodaError):
     pass
 
 
+class UntrustedHost(CodaError):
+    pass
+
+
 class DocumentNotFound(CodaError):
     pass
 

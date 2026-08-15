@@ -4,6 +4,7 @@ import datetime as dt
 import json
 import time
 from typing import Any, Dict, List, Tuple, Union
+from urllib.parse import urlsplit
 
 import attr
 import inflection
@@ -29,6 +30,32 @@ else:
 
 
 MAX_GET_LIMIT = 200
+
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def _origin(url: str) -> Tuple[str, str, int]:
+    """(scheme, host, port) for `url`, with the scheme's default port filled in."""
+    parts = urlsplit(url)
+    scheme = (parts.scheme or "").lower()
+    return (scheme, (parts.hostname or "").lower(), parts.port or _DEFAULT_PORTS.get(scheme))
+
+
+def assert_same_origin(url: str, expected: str) -> None:
+    """
+    Refuse to send the API token somewhere the API didn't come from.
+
+    `requests` strips the Authorization header when a *redirect* crosses
+    hosts, but a paginated response hands us a `nextPageLink` from the
+    response body and we fetch it directly, which sidesteps that protection.
+    A hostile or buggy link would otherwise receive the bearer token.
+    """
+    if _origin(url) != _origin(expected):
+        raise err.UntrustedHost(
+            f"refusing to send the API token to {_origin(url)[1] or url!r}, "
+            f"which is not the API host ({_origin(expected)[1]}). This link "
+            f"came from the API response body, not from a redirect."
+        )
 
 
 @decorator
@@ -85,7 +112,10 @@ class Coda:
         coda = Coda(keyring_profile="research")
     """
 
-    api_key: str = attr.ib(default=None, repr=False)
+    # Named with a leading underscore so attrs takes `api_key` as the init
+    # argument while the token itself never lives in an attrs field: see
+    # __attrs_post_init__.
+    _api_key: str = attr.ib(default=None, repr=False, eq=False)
     href: str = attr.ib(default=None, repr=False)
     keyring_profile: str = attr.ib(default=None)
     keyring_service: str = attr.ib(default=None)
@@ -108,12 +138,30 @@ class Coda:
         return cls(keyring_profile=keyring_profile)
 
     def __attrs_post_init__(self):
-        self.api_key, self.source = credentials.get_api_key_with_source(
-            self.api_key, keyring_profile=self.keyring_profile, keyring_service=self.keyring_service
+        token, self.source = credentials.get_api_key_with_source(
+            self._api_key,
+            keyring_profile=self.keyring_profile,
+            keyring_service=self.keyring_service,
         )
+        # Keep the token out of every attrs field. `attr.asdict()` reads
+        # fields directly and ignores repr=False, so a token left in one
+        # would be exposed by `attr.asdict(some_document)` recursing into
+        # the Coda it holds.
+        self._api_key = None
+        self._token = token
+
         self.keyring_profile = credentials.default_keyring_profile(self.keyring_profile)
         self.keyring_service = credentials.default_keyring_service(self.keyring_service)
         self.href = credentials.resolve_endpoint(self.href)
+
+    @property
+    def api_key(self) -> str:
+        """The resolved API token."""
+        return self._token
+
+    @api_key.setter
+    def api_key(self, value: str):
+        self._token = value
 
     @property
     def authorization(self) -> Dict:
@@ -151,6 +199,7 @@ class Coda:
         res = [r]
         while r.json().get("nextPageLink"):
             next_page = r.json()["nextPageLink"]
+            assert_same_origin(next_page, self.href)
             r = requests.get(next_page, headers=self.authorization)
             res.append(r)
         return res

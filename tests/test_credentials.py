@@ -315,6 +315,85 @@ class TestNoTokenLeaks:
         self._assert_clean(credentials.get_api_key_with_source().source)
 
 
+class TestTokenNotInAttrsFields:
+    """
+    `attr.asdict()` reads fields directly and ignores repr=False, so a token
+    stored in an attrs field is exposed by asdict -- including via a Document
+    recursing into the Coda it holds. The token therefore lives outside the
+    fields entirely.
+    """
+
+    def test_asdict_of_coda_has_no_token(self):
+        import attr
+
+        assert TOKEN not in str(attr.asdict(Coda(TOKEN)))
+
+    def test_asdict_of_document_has_no_token(self, main_document):
+        # asdict recurses into the Coda the Document holds, so check against
+        # whatever token that Coda actually resolved rather than planting one.
+        import attr
+
+        token = main_document.coda.api_key
+        assert token, "fixture should have resolved some token"
+        assert token not in str(attr.asdict(main_document))
+
+    def test_api_key_is_still_readable(self):
+        assert Coda(TOKEN).api_key == TOKEN
+
+    def test_api_key_is_still_writable(self):
+        coda = Coda("original")
+        coda.api_key = TOKEN
+        assert coda.api_key == TOKEN
+        assert coda.authorization == {"Authorization": f"Bearer {TOKEN}"}
+
+    def test_positional_construction_unchanged(self):
+        assert Coda(TOKEN).api_key == TOKEN
+
+
+class TestPaginationOrigin:
+    """
+    `requests` strips Authorization on cross-host *redirects*, but a
+    `nextPageLink` is read from the response body and fetched directly, so it
+    bypasses that protection and would hand the token to any host the API
+    names.
+    """
+
+    @pytest.mark.parametrize(
+        "next_page",
+        [
+            "https://attacker.example/steal",
+            "http://coda.io/apis/v1/docs",  # scheme downgrade
+            "https://coda.io.attacker.example/apis/v1/docs",  # suffix trick
+            "https://coda.io:8443/apis/v1/docs",  # different port
+        ],
+    )
+    def test_cross_origin_next_page_is_refused(
+        self, coda, mocked_responses, next_page
+    ):
+        mocked_responses.add(
+            "GET",
+            "https://coda.io/apis/v1/docs",
+            json={"items": [{"a": 1}], "nextPageLink": next_page},
+        )
+        with pytest.raises(err.UntrustedHost):
+            coda.list_docs()
+
+    def test_same_origin_next_page_is_followed(self, coda, mocked_responses):
+        base = "https://coda.io/apis/v1/docs"
+        mocked_responses.add(
+            "GET", base, json={"items": [{"a": 1}], "nextPageLink": base + "?page=2"}
+        )
+        mocked_responses.add("GET", base + "?page=2", json={"items": [{"b": 2}]})
+        assert coda.list_docs()["items"] == [{"a": 1}, {"b": 2}]
+
+    def test_default_port_is_equivalent_to_implicit(self):
+        from codaio.coda import assert_same_origin
+
+        assert_same_origin(
+            "https://coda.io:443/apis/v1/docs", "https://coda.io/apis/v1"
+        )
+
+
 class TestEnvBool:
     @pytest.mark.parametrize("raw", ["0", "false", "False", "no", "off", "", "  "])
     def test_falsey(self, monkeypatch, raw):

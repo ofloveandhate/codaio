@@ -57,6 +57,18 @@
 - The test suite runs again. `responses` removed its public `UNSET` sentinel,
   which broke 20 of 21 tests at fixture setup.
 
+- The API token is no longer sent to a host the API merely *names*.
+  `requests` strips the Authorization header when a redirect crosses hosts,
+  but a paginated response supplies its `nextPageLink` in the response body
+  and that link was fetched directly, sidestepping the protection. A hostile
+  or buggy link received the bearer token; verified exploitable before the
+  fix. Cross-origin links now raise `err.UntrustedHost`.
+- The token is no longer stored in an attrs field. `attr.asdict()` reads
+  fields directly and ignores `repr=False`, so `attr.asdict(some_document)`
+  recursed into the `Coda` it holds and exposed the token, even though
+  `repr()` and `meta_to_dict()` were clean. `Coda.api_key` still reads and
+  writes as before.
+
 ### Removed
 
 - The `envparse` dependency, unmaintained since 2018.
