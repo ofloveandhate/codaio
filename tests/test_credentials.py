@@ -86,41 +86,41 @@ class TestService:
         assert credentials.default_keyring_service("explicit") == "explicit"
 
     def test_reads_entry_under_a_custom_service(self, fake_keyring):
-        fake_keyring.set_password("coda_backup", "research", TOKEN)
+        fake_keyring.set_password("other_tool", "research", TOKEN)
         resolution = credentials.get_api_key_with_source(
-            keyring_profile="research", keyring_service="coda_backup"
+            keyring_profile="research", keyring_service="other_tool"
         )
-        assert resolution == (TOKEN, "keyring[coda_backup/research]")
+        assert resolution == (TOKEN, "keyring[other_tool/research]")
 
     def test_services_are_independent(self, fake_keyring):
         fake_keyring.set_password("codaio", "research", "key-a")
-        fake_keyring.set_password("coda_backup", "research", "key-b")
+        fake_keyring.set_password("other_tool", "research", "key-b")
         assert credentials.get_api_key(keyring_profile="research") == "key-a"
         assert (
-            credentials.get_api_key(keyring_profile="research", keyring_service="coda_backup")
+            credentials.get_api_key(keyring_profile="research", keyring_service="other_tool")
             == "key-b"
         )
 
     def test_store_and_delete_honour_service(self, fake_keyring):
-        credentials.store_api_key(TOKEN, keyring_profile="research", keyring_service="coda_backup")
-        assert fake_keyring.store[("coda_backup", "research")] == TOKEN
+        credentials.store_api_key(TOKEN, keyring_profile="research", keyring_service="other_tool")
+        assert fake_keyring.store[("other_tool", "research")] == TOKEN
         # The default service must not see it.
         with pytest.raises(err.NoApiKey):
             credentials.get_api_key(keyring_profile="research")
         assert credentials.delete_api_key(
-            keyring_profile="research", keyring_service="coda_backup"
+            keyring_profile="research", keyring_service="other_tool"
         ) is True
 
     def test_coda_accepts_service(self, fake_keyring):
-        fake_keyring.set_password("coda_backup", "research", TOKEN)
-        coda = Coda(keyring_profile="research", keyring_service="coda_backup")
+        fake_keyring.set_password("other_tool", "research", TOKEN)
+        coda = Coda(keyring_profile="research", keyring_service="other_tool")
         assert coda.api_key == TOKEN
-        assert coda.keyring_service == "coda_backup"
+        assert coda.keyring_service == "other_tool"
 
     def test_error_names_the_service_actually_used(self):
         with pytest.raises(err.NoApiKey) as excinfo:
-            credentials.get_api_key(keyring_profile="research", keyring_service="coda_backup")
-        assert "keyring set coda_backup research" in str(excinfo.value)
+            credentials.get_api_key(keyring_profile="research", keyring_service="other_tool")
+        assert "keyring set other_tool research" in str(excinfo.value)
 
 
 class TestExhaustedChain:
@@ -472,3 +472,74 @@ class TestDotenvNoLongerImplicit:
     def test_falsey_dotenv_var_does_not_load(self, monkeypatch):
         monkeypatch.setenv("CODAIO_DOTENV", "0")
         assert credentials.maybe_load_dotenv() is False
+
+    def test_unset_dotenv_var_does_not_load(self):
+        assert credentials.maybe_load_dotenv() is False
+
+    def test_truthy_dotenv_var_opts_back_in(self, monkeypatch, tmp_path):
+        loaded = {}
+        monkeypatch.setattr(
+            credentials, "load_dotenv", lambda *a, **k: loaded.setdefault("args", (a, k))
+        )
+        monkeypatch.setenv("CODAIO_DOTENV", "1")
+        credentials.maybe_load_dotenv()
+
+        assert "args" in loaded, "CODAIO_DOTENV=1 should trigger a load"
+
+    def test_a_path_in_the_dotenv_var_is_used_as_the_filename(
+        self, monkeypatch, tmp_path
+    ):
+        seen = {}
+        monkeypatch.setattr(
+            credentials, "load_dotenv", lambda path=None, **k: seen.setdefault("path", path)
+        )
+        env_file = tmp_path / "custom.env"
+        env_file.write_text("X=1\n")
+        monkeypatch.setenv("CODAIO_DOTENV", str(env_file))
+        credentials.maybe_load_dotenv()
+
+        assert seen["path"] == str(env_file)
+
+    def test_load_dotenv_warns_when_python_dotenv_is_absent(self, monkeypatch):
+        monkeypatch.setitem(sys.modules, "dotenv", None)
+        with pytest.warns(UserWarning, match="python-dotenv is not installed"):
+            assert credentials.load_dotenv() is False
+
+
+class TestKeyringStatusEdges:
+    def test_backend_discovery_failure_is_reported_not_raised(self, monkeypatch):
+        class Exploding:
+            @staticmethod
+            def get_keyring():
+                raise RuntimeError("dbus exploded")
+
+        monkeypatch.setitem(sys.modules, "keyring", Exploding)
+        status = credentials.keyring_status()
+
+        assert status.available is False
+        assert "dbus exploded" in status.reason
+
+    def test_chainer_with_only_failing_backends_is_insecure(self, monkeypatch):
+        class Fail:
+            pass
+
+        Fail.__module__ = "keyring.backends.fail"
+        Fail.__qualname__ = "Keyring"
+
+        class Chainer:
+            backends = [Fail()]
+
+        class Mod:
+            @staticmethod
+            def get_keyring():
+                return Chainer()
+
+        monkeypatch.setitem(sys.modules, "keyring", Mod)
+        status = credentials.keyring_status()
+
+        assert not status.secure
+        assert "no keyring backend" in status.reason
+
+    def test_delete_swallows_backend_errors(self, fake_keyring):
+        fake_keyring.raises = RuntimeError("dbus is dead")
+        assert credentials.delete_api_key(keyring_profile="research") is False

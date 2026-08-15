@@ -148,7 +148,10 @@ def _unwrap_backend(backend):
         name = f"{type(member).__module__}.{type(member).__qualname__}"
         if name != "keyring.backends.fail.Keyring":
             return member
-    return backend
+    # Every member is the fail backend. Report that rather than the chainer,
+    # so the reason says "no keyring backend available" instead of the much
+    # less useful "unrecognized backend".
+    return members[0]
 
 
 def keyring_status() -> KeyringStatus:
