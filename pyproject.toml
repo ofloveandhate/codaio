@@ -10,7 +10,7 @@ homepage='https://github.com/ofloveandhate/codaio'
 # (left out rather than empty: poetry-core rejects a non-URI documentation key)
 
 [tool.poetry.dependencies]
-python = "^3.9"
+python = "^3.10"
 requests = "^2.31.0"
 attrs = "^23.1.0"
 python-dateutil = "^2.8.2"
