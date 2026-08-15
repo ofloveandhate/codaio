@@ -16,16 +16,19 @@ Different Coda docsets usually want different tokens. Use a *profile* for
 that -- the profile name is the keyring entry's username under the service
 ``codaio``, so what you type is what shows up in Seahorse::
 
-    keyring set codaio research
+    python -m keyring set codaio research
     Coda(keyring_profile="research")
 
-This module deliberately does not import :mod:`codaio.coda`, both to avoid a
-circular import and so other tools can depend on the resolution logic alone.
+This module only ever *reads* the token. Writing one is the `keyring`
+package's own CLI job -- nothing here accepts a token as an argument, so
+there is no codaio code path that a token can leak out of.
+
+It deliberately does not import :mod:`codaio.coda`, both to avoid a circular
+import and so other tools can depend on the resolution logic alone.
 """
 
 from __future__ import annotations
 
-import hashlib
 import os
 import re
 import warnings
@@ -42,7 +45,6 @@ ENV_KEYRING_PROFILE = "CODA_KEYRING_PROFILE"
 ENV_ENDPOINT = "CODA_API_ENDPOINT"
 ENV_DOTENV = "CODAIO_DOTENV"
 ENV_KEYRING_SERVICE = "CODA_KEYRING_SERVICE"
-ENV_ALLOW_INSECURE_KEYRING = "CODAIO_ALLOW_INSECURE_KEYRING"
 
 DEFAULT_ENDPOINT = "https://coda.io/apis/v1"
 
@@ -116,31 +118,6 @@ def keyring_profile_env_var(keyring_profile: str) -> str:
     """Per-profile override variable, e.g. ``research`` -> ``CODA_API_KEY_RESEARCH``."""
     slug = re.sub(r"[^0-9A-Za-z]+", "_", keyring_profile).strip("_").upper()
     return f"{ENV_API_KEY}_{slug}"
-
-
-def fingerprint(api_key: str) -> str:
-    """
-    A short, stable, non-reversible identifier for a token.
-
-    Used instead of showing the first or last few characters of the token,
-    which would leak real material. Two machines holding the same token
-    produce the same fingerprint, which is the point -- it answers "is this
-    the same token I put on the server?".
-
-    CodeQL flags the SHA-256 here as weak hashing of sensitive data. That
-    rule models password storage, where an attacker steals a stored digest
-    and cracks it offline; nothing here is stored or verified against, and
-    the output is truncated to 48 bits, so a preimage search would return a
-    large set of candidates rather than the token.
-
-    The honest caveat: slow KDFs exist because *human* passwords are
-    guessable, and whether that reasoning lets Coda tokens off the hook
-    depends on their entropy -- which Coda does not document anywhere. So
-    this is a judgement call resting on an unverified assumption, not a
-    settled question. Do not extend the pattern to anything else, and do not
-    reuse this for anything that verifies a secret.
-    """
-    return "sha256:" + hashlib.sha256(api_key.encode()).hexdigest()[:12]
 
 
 def _import_keyring():
@@ -336,74 +313,6 @@ def get_api_key(
     return get_api_key_with_source(
         api_key, keyring_profile=keyring_profile, keyring_service=keyring_service
     ).api_key
-
-
-def store_api_key(
-    api_key: str,
-    *,
-    keyring_profile: Optional[str] = None,
-    keyring_service: Optional[str] = None,
-    allow_insecure_backend: bool = False,
-) -> str:
-    """
-    Write a token into the OS keyring.
-
-    ``python -m keyring set <service> <profile>`` does the same thing from a
-    shell; this exists so other tools can migrate stored credentials
-    programmatically.
-
-    Refuses to write to a backend that does not encrypt at rest, since doing
-    so would silently defeat the point of using a keyring at all.
-
-    :returns: a human-readable description of where the token was stored.
-    :raises codaio.err.InsecureKeyringBackend: on a backend that is unsafe or
-        unavailable, unless ``allow_insecure_backend`` is set.
-    """
-    if not api_key:
-        raise ValueError("refusing to store an empty API key")
-
-    keyring_profile = default_keyring_profile(keyring_profile)
-    keyring_service = default_keyring_service(keyring_service)
-    keyring = _import_keyring()
-    if keyring is None:
-        raise err.InsecureKeyringBackend(
-            "keyring package not installed; install it with "
-            '"pip install keyring"' 
-        )
-
-    status = keyring_status()
-    override = allow_insecure_backend or env_bool(ENV_ALLOW_INSECURE_KEYRING, False)
-    if not status.secure and not override:
-        raise err.InsecureKeyringBackend(
-            f"refusing to store the Coda token in {status.backend}: "
-            f"{status.reason}. Storing it here would not be encrypted at rest. "
-            f"Use the {keyring_profile_env_var(keyring_profile)} environment variable instead, "
-            f"or pass allow_insecure_backend=True to override."
-        )
-
-    keyring.set_password(keyring_service, keyring_profile, api_key)
-    return (
-        f"keyring[{keyring_service}/{keyring_profile}] via {status.backend} "
-        f"({fingerprint(api_key)})"
-    )
-
-
-def delete_api_key(
-    *, keyring_profile: Optional[str] = None, keyring_service: Optional[str] = None
-) -> bool:
-    """Remove a stored token. Returns False if there was nothing to remove."""
-    keyring_profile = default_keyring_profile(keyring_profile)
-    keyring_service = default_keyring_service(keyring_service)
-    keyring = _import_keyring()
-    if keyring is None:
-        return False
-    try:
-        if not keyring.get_password(keyring_service, keyring_profile):
-            return False
-        keyring.delete_password(keyring_service, keyring_profile)
-    except Exception:
-        return False
-    return True
 
 
 def resolve_endpoint(href: Optional[str] = None) -> str:

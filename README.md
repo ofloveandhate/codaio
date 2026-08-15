@@ -183,8 +183,14 @@ python -m keyring --list-backends     # every candidate, with priorities
 
 **On headless servers**, use `CODA_API_KEY` rather than the keyring. With no
 Secret Service running, the `keyring` package silently falls back to a
-backend that stores tokens base64-encoded rather than encrypted — `codaio`
-refuses to *write* to such a backend, and warns if it reads from one.
+backend that stores tokens base64-encoded rather than encrypted. `codaio`
+warns once if it *reads* from such a backend, but it cannot stop
+`python -m keyring set` writing to one — check `keyring_status()` first on
+any machine you are not sure about.
+
+`codaio` only ever reads the token. It has no function that stores one, and
+none that takes a token as an argument, so there is no codaio code path for
+a token to leak out of. Storing is `python -m keyring set`'s job.
 
 ##### Other variables
 

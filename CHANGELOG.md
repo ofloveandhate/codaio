@@ -37,8 +37,21 @@
 - Optional extras `dotenv` and `httpx`, both of which only matter if you set
   `CODAIO_DOTENV` or `USE_HTTPX` respectively. `httpx` declares a dependency
   the code has always soft-imported but never listed.
-- `err.InsecureKeyringBackend`. `err.NoApiKey` is now actually raised, with a
+- `err.NoApiKey` is now actually raised, with a
   message naming every mechanism that was tried.
+
+**codaio only ever reads the token.** There is deliberately no
+`store_api_key`, no `fingerprint`, and nothing else that takes a token as an
+argument — writing one is `python -m keyring set`'s job. A library function
+that accepts a raw secret is a leak surface, and there is no reason to have
+one when the `keyring` CLI already does the job.
+
+The tradeoff, stated plainly: codaio can no longer refuse to *write* to a
+keyring backend that does not encrypt at rest, because it no longer writes.
+`python -m keyring set` has no such guard. What remains is the read path,
+which warns once when it reads from an insecure backend, and
+`keyring_status()`, which reports the backend and whether it is safe. Check
+it before storing anything on an unfamiliar machine.
 
 ### Fixed
 

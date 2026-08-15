@@ -101,16 +101,6 @@ class TestService:
             == "key-b"
         )
 
-    def test_store_and_delete_honour_service(self, fake_keyring):
-        credentials.store_api_key(TOKEN, keyring_profile="research", keyring_service="other_tool")
-        assert fake_keyring.store[("other_tool", "research")] == TOKEN
-        # The default service must not see it.
-        with pytest.raises(err.NoApiKey):
-            credentials.get_api_key(keyring_profile="research")
-        assert credentials.delete_api_key(
-            keyring_profile="research", keyring_service="other_tool"
-        ) is True
-
     def test_coda_accepts_service(self, fake_keyring):
         fake_keyring.set_password("other_tool", "research", TOKEN)
         coda = Coda(keyring_profile="research", keyring_service="other_tool")
@@ -186,26 +176,6 @@ class TestBackendSafety:
         assert "NOT encrypted" in status.reason
 
     @pytest.mark.parametrize("fake_keyring", [PLAINTEXT_BACKEND], indirect=True)
-    def test_store_refuses_insecure_backend(self, fake_keyring):
-        with pytest.raises(err.InsecureKeyringBackend) as excinfo:
-            credentials.store_api_key(TOKEN, keyring_profile="research")
-        assert PLAINTEXT_BACKEND in str(excinfo.value)
-        assert fake_keyring.store == {}
-
-    @pytest.mark.parametrize("fake_keyring", [PLAINTEXT_BACKEND], indirect=True)
-    def test_store_override_argument(self, fake_keyring):
-        credentials.store_api_key(
-            TOKEN, keyring_profile="research", allow_insecure_backend=True
-        )
-        assert fake_keyring.store[("codaio", "research")] == TOKEN
-
-    @pytest.mark.parametrize("fake_keyring", [PLAINTEXT_BACKEND], indirect=True)
-    def test_store_override_env_var(self, monkeypatch, fake_keyring):
-        monkeypatch.setenv("CODAIO_ALLOW_INSECURE_KEYRING", "1")
-        credentials.store_api_key(TOKEN, keyring_profile="research")
-        assert fake_keyring.store[("codaio", "research")] == TOKEN
-
-    @pytest.mark.parametrize("fake_keyring", [PLAINTEXT_BACKEND], indirect=True)
     def test_reading_insecure_backend_warns_exactly_once(self, fake_keyring):
         fake_keyring.set_password("codaio", "default", TOKEN)
         with pytest.warns(UserWarning, match="not encrypted"):
@@ -248,10 +218,6 @@ class TestBackendSafety:
         monkeypatch.setitem(sys.modules, "keyring", Mod)
         assert credentials.keyring_status().secure
 
-    def test_store_without_keyring_package_raises(self):
-        with pytest.raises(err.InsecureKeyringBackend):
-            credentials.store_api_key(TOKEN)
-
     def test_this_machines_real_backend_is_classified(self, monkeypatch):
         """
         The allowlist matches backends by exact dotted name, so a rename
@@ -272,34 +238,9 @@ class TestBackendSafety:
         )
 
 
-class TestStoreAndDelete:
-    def test_round_trip(self, fake_keyring):
-        credentials.store_api_key(TOKEN, keyring_profile="research")
-        assert credentials.get_api_key(keyring_profile="research") == TOKEN
-        assert credentials.delete_api_key(keyring_profile="research") is True
-        assert credentials.delete_api_key(keyring_profile="research") is False
-
-    def test_refuses_empty_token(self, fake_keyring):
-        with pytest.raises(ValueError):
-            credentials.store_api_key("")
-
-    def test_delete_without_keyring_package(self):
-        assert credentials.delete_api_key() is False
-
-
 class TestNoTokenLeaks:
     def _assert_clean(self, text):
         assert TOKEN not in text
-
-    def test_fingerprint_hides_token(self):
-        self._assert_clean(credentials.fingerprint(TOKEN))
-
-    def test_fingerprint_is_stable_and_distinguishing(self):
-        assert credentials.fingerprint(TOKEN) == credentials.fingerprint(TOKEN)
-        assert credentials.fingerprint(TOKEN) != credentials.fingerprint("other")
-
-    def test_store_description_hides_token(self, fake_keyring):
-        self._assert_clean(credentials.store_api_key(TOKEN, keyring_profile="research"))
 
     def test_error_message_hides_token(self, monkeypatch):
         monkeypatch.setenv("CODA_API_KEY_OTHER", TOKEN)
@@ -539,7 +480,3 @@ class TestKeyringStatusEdges:
 
         assert not status.secure
         assert "no keyring backend" in status.reason
-
-    def test_delete_swallows_backend_errors(self, fake_keyring):
-        fake_keyring.raises = RuntimeError("dbus is dead")
-        assert credentials.delete_api_key(keyring_profile="research") is False

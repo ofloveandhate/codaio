@@ -6,10 +6,6 @@ class NoApiKey(CodaError):
     pass
 
 
-class InsecureKeyringBackend(CodaError):
-    pass
-
-
 class UntrustedHost(CodaError):
     pass
 
