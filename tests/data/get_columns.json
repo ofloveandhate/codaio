@@ -9,6 +9,11 @@
       "format": {
         "type": "text",
         "isArray": false
+      },
+      "calculated": false,
+      "someFutureField": {
+        "added": "by the API",
+        "after": "codaio was written"
       }
     },
     {
@@ -19,6 +24,12 @@
       "format": {
         "type": "text",
         "isArray": false
+      },
+      "calculated": false,
+      "display": false,
+      "someFutureField": {
+        "added": "by the API",
+        "after": "codaio was written"
       }
     },
     {
@@ -29,6 +40,12 @@
       "format": {
         "type": "text",
         "isArray": false
+      },
+      "calculated": false,
+      "display": false,
+      "someFutureField": {
+        "added": "by the API",
+        "after": "codaio was written"
       }
     },
     {
@@ -39,6 +56,12 @@
       "format": {
         "type": "text",
         "isArray": false
+      },
+      "calculated": false,
+      "display": false,
+      "someFutureField": {
+        "added": "by the API",
+        "after": "codaio was written"
       }
     },
     {
@@ -51,7 +74,12 @@
         "isArray": false
       },
       "calculated": true,
-      "formula": "1=1"
+      "formula": "1=1",
+      "display": false,
+      "someFutureField": {
+        "added": "by the API",
+        "after": "codaio was written"
+      }
     }
   ],
   "href": "https://coda.io/apis/v1/docs/doc_id/tables/table_id/columns?pageToken=token"

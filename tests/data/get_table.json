@@ -43,5 +43,10 @@
       "browserLink": "https://coda.io/d/_dAbCDeFGH/Launch-Status_sumnO",
       "name": "Launch Status"
     }
+  },
+  "viewId": null,
+  "someFutureField": {
+    "added": "by the API",
+    "after": "codaio was written"
   }
 }

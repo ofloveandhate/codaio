@@ -9,7 +9,7 @@ import json
 
 import pytest
 
-from codaio import Cell, Coda, Column, Document, Row, Table
+from codaio import Coda, Document, Table
 from tests.conftest import BASE_URL
 
 
@@ -138,22 +138,25 @@ class TestSerializesToJson:
 
 @pytest.mark.usefixtures("mock_meta_responses")
 class TestToDict:
-    def test_row_to_dict_raises_when_a_column_has_no_value(self, main_table):
+    def test_a_column_with_no_value_becomes_none(self, main_table):
         """
-        Current behaviour, pinned rather than endorsed.
+        A partly-filled row is ordinary, and used to raise.
 
-        `Row.to_dict` walks every column of the *table* and looks each one up
-        on the row, so a row carrying no value for some column raises instead
-        of omitting the key or filling a blank. The repo's own fixtures are
-        shaped that way -- get_columns.json has five columns and the rows in
-        get_rows.json carry four -- so this is reachable with real responses,
-        and it takes `Table.to_dict` (the documented pandas path) down with it.
+        `Row.to_dict` looked every column of the table up on the row, so a row
+        carrying no value for one of them raised `KeyError` -- taking
+        `Table.to_dict`, the documented pandas path, down with it. The repo's own
+        fixtures are shaped that way: get_columns.json has five columns and the
+        rows in get_rows.json carry four.
+
+        Every column still appears, so rows of one table share their keys and
+        line up in a DataFrame.
         """
-        with pytest.raises(KeyError):
-            main_table.rows()[0].to_dict()
+        row = main_table.rows()[0]
+        as_dict = row.to_dict()
 
-        with pytest.raises(KeyError):
-            main_table.to_dict()
+        assert set(as_dict) == {c.name for c in main_table.columns()}
+        assert any(value is None for value in as_dict.values())
+        assert all(set(r) == set(as_dict) for r in main_table.to_dict())
 
     def test_row_to_dict_is_column_name_keyed_when_values_are_complete(
         self, main_table

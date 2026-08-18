@@ -7,26 +7,29 @@ from __future__ import annotations
 import datetime as dt
 import json
 import time
-from typing import TYPE_CHECKING, Any, Dict, List, Tuple, Union
+from typing import Any, Dict, List, Tuple, Union
 
 import attr
 from dateutil.parser import parse
 
 from codaio import err
-from codaio.objects.base import CodaObject
+from codaio.objects.base import (
+    CodaObject,
+    ColumnFormat,
+    Reference,
+    TableReference,
+    column_format,
+    ref,
+)
 
-if TYPE_CHECKING:  # pragma: no cover
-    from codaio.objects.document import Document
 
-
-@attr.s(auto_attribs=True, hash=True)
+@attr.s(auto_attribs=True, eq=False, repr=False)
 class Table(CodaObject):
-    name: str
-    document: Document = attr.ib(repr=False)
+    name: str = None
     display_column: Dict = attr.ib(default=None, repr=False)
     browser_link: str = attr.ib(default=None, repr=False)
     row_count: int = attr.ib(default=None, repr=False)
-    sorts: List = attr.ib(default=[], repr=False)
+    sorts: List = attr.ib(factory=list, repr=False)
     layout: str = attr.ib(repr=False, default=None)
     table_type: str = attr.ib(default=None, repr=False)
     created_at: dt.datetime = attr.ib(
@@ -35,9 +38,10 @@ class Table(CodaObject):
     updated_at: dt.datetime = attr.ib(
         repr=False, converter=lambda x: parse(x) if x else None, default=None
     )
-    columns_storage: List[Column] = attr.ib(default=[], repr=False)
+    columns_storage: List[Column] = attr.ib(factory=list, repr=False)
     filter: Dict = attr.ib(default=None, repr=False)
-    parent_table: Table = attr.ib(default=None, repr=False)
+    parent: Reference = attr.ib(default=None, converter=ref, repr=False)
+    parent_table: TableReference = attr.ib(default=None, converter=ref, repr=False)
     view_id: str = attr.ib(default=None, repr=False)
 
     def meta_to_dict(self, incl_doc=False) -> Dict:
@@ -94,7 +98,7 @@ class Table(CodaObject):
         """
         if not self.columns_storage:
             self.columns_storage = [
-                Column.from_json({**i, "table": self}, document=self.document)
+                Column.from_json(i, document=self.document, table=self)
                 for i in self.document.coda.list_columns(
                     self.document.id, self.id, offset=offset, limit=limit
                 )["items"]
@@ -112,7 +116,7 @@ class Table(CodaObject):
         :return:
         """
         return [
-            Row.from_json({"table": self, **i}, document=self.document)
+            Row.from_json(i, document=self.document, table=self)
             for i in self.document.coda.list_rows(
                 self.document.id, self.id, offset=offset, limit=limit, data=data
             )["items"]
@@ -120,7 +124,7 @@ class Table(CodaObject):
 
     def get_row_by_id(self, row_id: str) -> Row:
         row_js = self.document.coda.get_row(self.document.id, self.id, row_id)
-        row = Row.from_json({**row_js, "table": self}, document=self.document)
+        row = Row.from_json(row_js, document=self.document, table=self)
         return row
 
     def get_column_by_id(self, column_id) -> Column:
@@ -132,9 +136,27 @@ class Table(CodaObject):
         :return:
         """
         try:
-            return next(filter(lambda x: x.id == column_id, self.columns()))
-        except StopIteration:
+            return self._columns_by_id()[column_id]
+        except KeyError:
             raise err.ColumnNotFound(f"No column with id {column_id}")
+
+    def _columns_by_id(self) -> Dict[str, Column]:
+        """
+        Column lookup by id, built once per set of columns.
+
+        This used to be a linear scan, which would be unremarkable except for how
+        often it runs: `Row.cells()` builds a `Cell` per value and looks up a
+        column for each, and `Row.to_dict()` calls that once per column. Three
+        nested linear passes made turning one wide row into a dict cubic in the
+        column count -- around 125,000 operations per row at fifty columns, which
+        is minutes of pure Python over a few thousand rows.
+        """
+        columns = self.columns()
+        cache = getattr(self, "_column_index", None)
+        if cache is None or cache[0] is not columns or len(cache[1]) != len(columns):
+            cache = (columns, {column.id: column for column in columns})
+            object.__setattr__(self, "_column_index", cache)
+        return cache[1]
 
     def get_column_by_name(self, column_name) -> Column:
         """
@@ -172,7 +194,7 @@ class Table(CodaObject):
         if not r.get("items"):
             return []
         return [
-            Row.from_json({**i, "table": self}, document=self.document)
+            Row.from_json(i, document=self.document, table=self)
             for i in r["items"]
         ]
 
@@ -192,7 +214,7 @@ class Table(CodaObject):
         if not r.get("items"):
             return []
         return [
-            Row.from_json({**i, "table": self}, document=self.document)
+            Row.from_json(i, document=self.document, table=self)
             for i in r["items"]
         ]
 
@@ -307,14 +329,20 @@ class Table(CodaObject):
         return [row.to_dict() for row in self.rows()]
 
 
-@attr.s(auto_attribs=True, hash=True)
+@attr.s(auto_attribs=True, eq=False, repr=False)
 class Column(CodaObject):
-    name: str
-    table: Table = attr.ib(repr=False)
+    name: str = None
+    table: Table = attr.ib(default=None, repr=False)
     display: bool = attr.ib(default=None, repr=False)
     calculated: bool = attr.ib(default=False)
     formula: str = attr.ib(default=None, repr=False)
     default_value: str = attr.ib(default=None, repr=False)
+    # Restored. This is the column's *type* -- `format.type` is "text", "canvas",
+    # "person", "image" and so on -- and it was previously discarded on arrival,
+    # so the only way to find out what a column held was to inspect a row that
+    # happened to have a value in it.
+    format: ColumnFormat = attr.ib(default=None, converter=column_format, repr=False)
+    parent: TableReference = attr.ib(default=None, converter=ref, repr=False)
 
     def meta_to_dict(self, incl_table=False) -> Dict:
         """
@@ -334,19 +362,24 @@ class Column(CodaObject):
         return meta_super | meta # using https://peps.python.org/pep-0584/
 
 
-@attr.s(auto_attribs=True, hash=True)
+@attr.s(auto_attribs=True, eq=False, repr=False)
 class Row(CodaObject):
-    name: str
-    created_at: dt.datetime = attr.ib(converter=lambda x: parse(x), repr=False)
-    index: int
+    name: str = None
+    index: int = None
+    created_at: dt.datetime = attr.ib(
+        default=None, converter=lambda x: parse(x) if x else None, repr=False
+    )
     updated_at: dt.datetime = attr.ib(
-        converter=lambda x: parse(x) if x else None, repr=False
+        default=None, converter=lambda x: parse(x) if x else None, repr=False
     )
     values: Tuple[Tuple] = attr.ib(
-        converter=lambda x: tuple([(k, v) for k, v in x.items()]), repr=False
+        default=(),
+        converter=lambda x: tuple(x.items()) if isinstance(x, dict) else tuple(x or ()),
+        repr=False,
     )
-    table: Table = attr.ib(repr=False)
+    table: Table = attr.ib(default=None, repr=False)
     browser_link: str = attr.ib(default=None, repr=False)
+    parent: TableReference = attr.ib(default=None, converter=ref, repr=False)
 
 
     def meta_to_dict(self, incl_table=False) -> Dict:
@@ -425,11 +458,22 @@ class Row(CodaObject):
 
     def to_dict(self) -> Dict:
         """
-        Returns a row as a dictionary.
+        Returns a row as a dictionary keyed by column name.
+
+        Every column of the table appears, so rows of the same table produce
+        dicts with the same keys and line up in a DataFrame. A column the row
+        carries no value for comes back as None; it used to raise `KeyError`,
+        which also took `Table.to_dict` -- the documented pandas path -- down
+        with it whenever a row was less than completely filled in.
+
+        Reads `values` directly instead of asking for a cell per column. Going
+        through `__getitem__` rebuilt every `Cell` on the row for each column
+        looked up, which made this quadratic in the column count for no gain.
 
         :return:
         """
-        return {column.name: self[column].value for column in self.columns()}
+        values = dict(self.values)
+        return {column.name: values.get(column.id) for column in self.columns()}
 
 
 @attr.s(auto_attribs=True, hash=True, repr=False)

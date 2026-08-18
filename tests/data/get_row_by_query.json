@@ -14,6 +14,10 @@
         "column_id-1": "value-Beta",
         "column_id-2": "value-Omega",
         "column_id-3": "value-Gamma"
+      },
+      "someFutureField": {
+        "added": "by the API",
+        "after": "codaio was written"
       }
     }
   ],

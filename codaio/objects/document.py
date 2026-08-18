@@ -17,7 +17,7 @@ from codaio.objects.page import Section
 from codaio.objects.table import Table
 
 
-@attr.s(hash=True)
+@attr.s(eq=False, repr=False)
 class Document:
     """Main class for interacting with coda.io API using `codaio` objects."""
 
@@ -30,6 +30,18 @@ class Document:
     updated_at: dt.datetime = attr.ib(init=False, repr=False)
     browser_link: str = attr.ib(init=False)
     coda: Coda = attr.ib(repr=False)
+
+    def __eq__(self, other):
+        """Same id, same doc -- see `CodaObject.__eq__` for why identity, not content."""
+        if type(self) is not type(other):
+            return NotImplemented
+        return self.id == other.id
+
+    def __hash__(self):
+        return hash((type(self).__name__, self.id))
+
+    def __repr__(self):
+        return f"Document(id={self.id!r}, name={getattr(self, 'name', None)!r})"
 
     def meta_to_dict(self, incl_coda=False) -> Dict:
         """
@@ -155,6 +167,14 @@ class Document:
         raise err.TableNotFound(f"{table_id_or_name}")
 
 
-@attr.s(auto_attribs=True, hash=True)
+@attr.s(auto_attribs=True, eq=False, repr=False)
 class Folder(CodaObject):
-    pass
+    """
+    A folder.
+
+    Note it has no `href`, which is why the base makes that field optional --
+    every other object the API returns carries one.
+    """
+
+    name: str = None
+    browser_link: str = attr.ib(default=None, repr=False)

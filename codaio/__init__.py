@@ -6,7 +6,16 @@ from .credentials import (  # noqa
     keyring_status,
 )
 from .client import Coda  # noqa
-from .objects.base import CodaObject  # noqa
+from .objects.base import (  # noqa
+    CodaObject,
+    ColumnFormat,
+    ColumnReference,
+    FolderReference,
+    PageReference,
+    Reference,
+    TableReference,
+    WorkspaceReference,
+)
 from .objects.document import Document, Folder  # noqa
 from .objects.page import Section  # noqa
 from .objects.table import Cell, Column, Row, Table  # noqa
