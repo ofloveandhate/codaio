@@ -60,6 +60,65 @@ class Endpoint:
 
 _PAGING = ("limit", "pageToken")
 
+#: Formats `POST /pages/{id}/export` accepts.
+PAGE_EXPORT_FORMATS = frozenset({"markdown", "html"})
+
+#: Every id the API mints carries a type prefix. Used to tell an id from a name,
+#: which matters because addressing by name selects an arbitrary match among
+#: things sharing that name -- so a write addressed by name can never be replayed.
+ID_PREFIXES = {
+    "page": ("canvas-",),
+    "table": ("grid-",),
+    "column": ("c-",),
+    "row": ("i-",),
+    "folder": ("fl-",),
+    "formula": ("f-",),
+    "control": ("ctrl-",),
+    "element": ("cl-",),
+}
+
+
+def looks_like_page_id(value: str) -> bool:
+    """
+    Whether this addresses a page by id rather than by name.
+
+    Conservative on purpose: anything that is not recognisably an id is treated
+    as a name, and a name is never safe to replay.
+    """
+    return isinstance(value, str) and value.startswith(ID_PREFIXES["page"])
+
+
+def page_update_idempotency(page_id_or_name: str, data: Dict) -> Idempotency:
+    """
+    Whether one `PUT /pages/{id}` may be replayed. See `Coda.update_page`.
+
+    Three arguments decide it, which is exactly why this cannot be a per-method
+    constant and must not be left to callers.
+    """
+    if not looks_like_page_id(page_id_or_name):
+        # An arbitrary page among those sharing the name would be chosen, and it
+        # need not be the same one twice.
+        return Idempotency.UNSAFE
+
+    update = (data or {}).get("contentUpdate")
+    if not update:
+        # Metadata only: name, subtitle, icon, cover, hidden. Full assignment.
+        return Idempotency.IDEMPOTENT
+
+    if update.get("insertionMode") != "replace":
+        # append/prepend: a replay adds the content a second time.
+        return Idempotency.UNSAFE
+
+    if update.get("elementId"):
+        # The first attempt consumes that element and its replacement gets fresh
+        # ids, so on a replay the id is gone -- and a *missing* elementId is
+        # documented as meaning "operate on the entire page". A retried paragraph
+        # edit could therefore replace the whole page.
+        return Idempotency.UNSAFE
+
+    # Replacing all of a page's content with the same content converges.
+    return Idempotency.IDEMPOTENT
+
 ENDPOINTS: Dict[str, Endpoint] = {
     # -- Docs --------------------------------------------------------------
     "list_docs": Endpoint(
@@ -77,12 +136,59 @@ ENDPOINTS: Dict[str, Endpoint] = {
     ),
 
     # -- Pages (still spelled "section" in the method names) ---------------
+    # Deprecated spellings, kept working. Pages were called sections when these
+    # were named; the URLs have pointed at /pages for years.
     "list_sections": Endpoint(
         "GET", "/docs/{docId}/pages", args=("doc_id",), params=_PAGING,
     ),
     "get_section": Endpoint(
         "GET", "/docs/{docId}/pages/{pageIdOrName}",
         args=("doc_id", "section_id_or_name"),
+    ),
+
+    "list_pages": Endpoint(
+        "GET", "/docs/{docId}/pages", args=("doc_id",), params=_PAGING,
+    ),
+    "get_page": Endpoint(
+        "GET", "/docs/{docId}/pages/{pageIdOrName}",
+        args=("doc_id", "page_id_or_name"),
+    ),
+    "create_page": Endpoint(
+        "POST", "/docs/{docId}/pages", args=("doc_id",),
+        idempotency=Idempotency.UNSAFE, success=(202,),
+    ),
+    # Idempotency here is computed per call by `page_update_idempotency`; this is
+    # the value for the most common shape, a metadata-only update by id.
+    "update_page": Endpoint(
+        "PUT", "/docs/{docId}/pages/{pageIdOrName}",
+        args=("doc_id", "page_id_or_name"),
+        idempotency=Idempotency.IDEMPOTENT, success=(202,),
+    ),
+    "delete_page": Endpoint(
+        "DELETE", "/docs/{docId}/pages/{pageIdOrName}",
+        args=("doc_id", "page_id_or_name"),
+        idempotency=Idempotency.IDEMPOTENT, success=(202,),
+    ),
+    "get_page_content": Endpoint(
+        "GET", "/docs/{docId}/pages/{pageIdOrName}/content",
+        args=("doc_id", "page_id_or_name"),
+        params=("contentFormat",) + _PAGING,
+    ),
+    "delete_page_content": Endpoint(
+        "DELETE", "/docs/{docId}/pages/{pageIdOrName}/content",
+        args=("doc_id", "page_id_or_name"),
+        idempotency=Idempotency.IDEMPOTENT, success=(202,),
+    ),
+    # No durable state changes, so a replay costs only a slot in the tightest
+    # rate-limit bucket.
+    "begin_page_export": Endpoint(
+        "POST", "/docs/{docId}/pages/{pageIdOrName}/export",
+        args=("doc_id", "page_id_or_name"),
+        idempotency=Idempotency.IDEMPOTENT, success=(202,),
+    ),
+    "get_page_export": Endpoint(
+        "GET", "/docs/{docId}/pages/{pageIdOrName}/export/{requestId}",
+        args=("doc_id", "page_id_or_name", "request_id"),
     ),
 
     # -- Folders -----------------------------------------------------------

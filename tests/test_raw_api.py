@@ -25,8 +25,12 @@ CALLS = {
     "list_docs": {},
     "get_doc": {"doc_id": "d1"},
     "delete_doc": {"doc_id": "d1"},
-    "list_sections": {"doc_id": "d1"},
-    "get_section": {"doc_id": "d1", "section_id_or_name": "s1"},
+    "list_pages": {"doc_id": "d1"},
+    "get_page": {"doc_id": "d1", "page_id_or_name": "canvas-p1"},
+    "get_page_content": {"doc_id": "d1", "page_id_or_name": "canvas-p1"},
+    "get_page_export": {
+        "doc_id": "d1", "page_id_or_name": "canvas-p1", "request_id": "req-1",
+    },
     "list_folders": {"doc_id": "d1"},
     "get_folder": {"doc_id": "d1", "folder_id_or_name": "f1"},
     "get_view": {"doc_id": "d1", "view_id_or_name": "v1"},
@@ -120,7 +124,15 @@ def test_every_registered_endpoint_is_exercised():
     model elsewhere. Without this an entry could describe a URL nothing sends.
     """
     exercised_via_object_model = {
+        # deprecated spellings, covered by TestDeprecatedSpellings
+        "list_sections",
+        "get_section",
         "create_doc",
+        "create_page",
+        "update_page",
+        "delete_page",
+        "delete_page_content",
+        "begin_page_export",
         "upsert_row",
         "update_row",
         "list_tables",
@@ -130,6 +142,35 @@ def test_every_registered_endpoint_is_exercised():
 
     missing = set(ENDPOINTS) - set(CALLS) - exercised_via_object_model
     assert not missing, f"registered endpoints nothing exercises: {sorted(missing)}"
+
+
+class TestDeprecatedSpellings:
+    """
+    Pages were called sections when these were named, and the URLs have pointed
+    at /pages for years. The names still work, and say that they are the old ones.
+    """
+
+    def test_list_sections_warns_and_delegates(self, coda, mock_json_response,
+                                               mocked_responses):
+        mock_json_response(BASE_URL + "/docs/d1/pages", "empty.json")
+
+        with pytest.deprecated_call(match="list_pages"):
+            coda.list_sections("d1")
+
+        assert mocked_responses.calls[0].request.url.startswith(
+            BASE_URL + "/docs/d1/pages"
+        )
+
+    def test_get_section_warns_and_delegates(self, coda, mock_json_response,
+                                             mocked_responses):
+        mock_json_response(BASE_URL + "/docs/d1/pages/s1", "empty.json")
+
+        with pytest.deprecated_call(match="get_page"):
+            coda.get_section("d1", "s1")
+
+        assert mocked_responses.calls[0].request.url.startswith(
+            BASE_URL + "/docs/d1/pages/s1"
+        )
 
 
 class TestPagination:

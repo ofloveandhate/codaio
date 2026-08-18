@@ -24,7 +24,7 @@ import pytest
 from codaio import err
 from codaio.objects import base
 from codaio.objects.base import CodaObject, PageReference, Reference, TableReference
-from codaio.objects.page import Section
+from codaio.objects.page import Page
 from codaio.objects.table import Column, Row, Table
 
 DATA = Path(__file__).parent / "data"
@@ -61,34 +61,34 @@ REALISTIC_PAGE = {
 
 class TestUnknownFieldsAreKept:
     def test_a_field_codaio_does_not_model_does_not_raise(self):
-        page = Section.from_json({**REALISTIC_PAGE, "wholeNewThing": 42})
+        page = Page.from_json({**REALISTIC_PAGE, "wholeNewThing": 42})
 
         assert page.id == "canvas-IjkLmnO"
         assert page.unknown_fields == {"wholeNewThing": 42}
 
     def test_an_unknown_field_is_still_readable(self):
-        page = Section.from_json({**REALISTIC_PAGE, "wholeNewThing": 42})
+        page = Page.from_json({**REALISTIC_PAGE, "wholeNewThing": 42})
 
         assert page.field("wholeNewThing") == 42
 
     def test_field_accepts_either_spelling(self):
-        page = Section.from_json(REALISTIC_PAGE)
+        page = Page.from_json(REALISTIC_PAGE)
 
         assert page.field("isHidden") is False
         assert page.field("is_hidden") is False
 
     def test_field_returns_the_default_when_absent(self):
-        assert Section.from_json(REALISTIC_PAGE).field("nope", "fallback") == "fallback"
+        assert Page.from_json(REALISTIC_PAGE).field("nope", "fallback") == "fallback"
 
     def test_raw_is_the_payload_unchanged(self):
-        page = Section.from_json(REALISTIC_PAGE)
+        page = Page.from_json(REALISTIC_PAGE)
 
         assert page.raw == REALISTIC_PAGE
         assert page.to_json() == REALISTIC_PAGE
 
     def test_raw_is_a_copy_not_the_caller_s_dict(self):
         payload = dict(REALISTIC_PAGE)
-        page = Section.from_json(payload)
+        page = Page.from_json(payload)
         payload["name"] = "mutated afterwards"
 
         assert page.raw["name"] == "Launch Status"
@@ -106,20 +106,20 @@ class TestUnknownFieldsAreKept:
     def test_unknown_fields_is_empty_when_fully_modelled(self):
         minimal = {"id": "canvas-1", "type": "page", "href": "h", "name": "n"}
 
-        assert Section.from_json(minimal).unknown_fields == {}
+        assert Page.from_json(minimal).unknown_fields == {}
 
 
 class TestWarningIsOptIn:
     def test_silent_by_default(self):
         with warnings.catch_warnings():
             warnings.simplefilter("error")
-            Section.from_json({**REALISTIC_PAGE, "wholeNewThing": 42})
+            Page.from_json({**REALISTIC_PAGE, "wholeNewThing": 42})
 
     def test_warns_when_switched_on(self, monkeypatch):
         monkeypatch.setattr(base, "WARN_ON_UNKNOWN_FIELDS", True)
 
         with pytest.warns(err.UnknownFieldWarning, match="wholeNewThing"):
-            Section.from_json({**REALISTIC_PAGE, "wholeNewThing": 42})
+            Page.from_json({**REALISTIC_PAGE, "wholeNewThing": 42})
 
 
 class TestRestoredFields:
@@ -130,7 +130,7 @@ class TestRestoredFields:
     """
 
     def test_page_parent_and_children_become_references(self):
-        page = Section.from_json(REALISTIC_PAGE)
+        page = Page.from_json(REALISTIC_PAGE)
 
         assert isinstance(page.parent, PageReference)
         assert page.parent.name == "Root"
@@ -138,7 +138,7 @@ class TestRestoredFields:
         assert isinstance(page.children[0], PageReference)
 
     def test_children_is_a_tuple_even_when_absent(self):
-        page = Section.from_json({"id": "canvas-1", "type": "page"})
+        page = Page.from_json({"id": "canvas-1", "type": "page"})
 
         assert page.children == ()
 
@@ -185,28 +185,28 @@ class TestIdentity:
         assert hash(row)
 
     def test_same_id_same_object(self):
-        first = Section.from_json(REALISTIC_PAGE)
-        second = Section.from_json({**REALISTIC_PAGE, "name": "Renamed since"})
+        first = Page.from_json(REALISTIC_PAGE)
+        second = Page.from_json({**REALISTIC_PAGE, "name": "Renamed since"})
 
         assert first == second
         assert hash(first) == hash(second)
 
     def test_different_ids_are_different(self):
-        first = Section.from_json(REALISTIC_PAGE)
-        second = Section.from_json({**REALISTIC_PAGE, "id": "canvas-other"})
+        first = Page.from_json(REALISTIC_PAGE)
+        second = Page.from_json({**REALISTIC_PAGE, "id": "canvas-other"})
 
         assert first != second
 
     def test_different_classes_never_compare_equal(self):
         """A page and a table sharing an id are not the same thing."""
-        page = Section.from_json({"id": "shared", "type": "page"})
+        page = Page.from_json({"id": "shared", "type": "page"})
         table = Table.from_json({"id": "shared", "type": "table"})
 
         assert page != table
 
     def test_objects_can_be_used_in_a_set(self):
-        pages = {Section.from_json(REALISTIC_PAGE),
-                 Section.from_json({**REALISTIC_PAGE, "subtitle": "changed"})}
+        pages = {Page.from_json(REALISTIC_PAGE),
+                 Page.from_json({**REALISTIC_PAGE, "subtitle": "changed"})}
 
         assert len(pages) == 1
 
@@ -258,7 +258,7 @@ class TestSharedMutableDefaults:
 def test_every_object_class_tolerates_a_novel_field():
     """A blanket check, so a class added later cannot quietly be strict."""
     payloads = {
-        Section: {"id": "canvas-1", "type": "page", "name": "P"},
+        Page: {"id": "canvas-1", "type": "page", "name": "P"},
         Table: {"id": "grid-1", "type": "table", "name": "T"},
         Column: {"id": "c-1", "type": "column", "name": "C"},
         Row: {"id": "i-1", "type": "row", "name": "R", "index": 0, "values": {}},

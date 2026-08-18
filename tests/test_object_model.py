@@ -291,14 +291,36 @@ class TestRawOptionalParams:
 
         assert Document.from_environment("doc_id").coda.api_key == "tok"
 
-    def test_document_list_sections(self, main_document, mock_json_response):
-        from codaio.objects.page import Section
+    def test_document_list_pages(self, main_document, mock_json_response):
+        """
+        The payload this parses is the one the old object model could not build.
+
+        A real page carries subtitle, contentType, isHidden and children, and
+        every one of those raised TypeError -- so this call was broken against
+        any live doc while the suite stayed green on a hand-written fixture.
+        """
+        from codaio import Page
 
         mock_json_response(BASE_URL + "/docs/doc_id/pages", "get_sections.json")
-        sections = main_document.list_sections()
+        pages = main_document.list_pages()
 
-        assert sections
-        assert all(isinstance(s, Section) for s in sections)
+        assert pages
+        assert all(isinstance(p, Page) for p in pages)
+        assert pages[0].subtitle == "The first page"
+        assert pages[0].content_type == "canvas"
+        assert [c.id for c in pages[0].children] == ["section_id-1"]
+
+    def test_list_sections_still_works_and_says_it_is_the_old_name(
+        self, main_document, mock_json_response
+    ):
+        from codaio import Page
+
+        mock_json_response(BASE_URL + "/docs/doc_id/pages", "get_sections.json")
+
+        with pytest.deprecated_call(match="list_pages"):
+            pages = main_document.list_sections()
+
+        assert all(isinstance(p, Page) for p in pages)
 
 
 class TestFindRowByColumnName:

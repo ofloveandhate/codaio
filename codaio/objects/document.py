@@ -5,7 +5,8 @@
 from __future__ import annotations
 
 import datetime as dt
-from typing import Dict, List
+import warnings
+from typing import Dict, Iterator, List
 
 import attr
 from dateutil.parser import parse
@@ -13,7 +14,7 @@ from dateutil.parser import parse
 from codaio import err
 from codaio.client import Coda
 from codaio.objects.base import CodaObject
-from codaio.objects.page import Section
+from codaio.objects.page import Page, PageTree, _content_payload
 from codaio.objects.table import Table
 
 
@@ -116,9 +117,11 @@ class Document:
         self.type = data["type"]
         self.browser_link = data["browserLink"]
 
-    def list_sections(self, offset: int = None, limit: int = None) -> List[Section]:
+    def list_pages(self, offset: str = None, limit: int = None) -> List[Page]:
         """
-        Returns a list of `Section` objects for each section in the document.
+        Returns a `Page` for every page in the document.
+
+        The listing is flat. Use :meth:`page_tree` when you want the hierarchy.
 
         :param limit: Maximum number of results to return in this query.
 
@@ -127,11 +130,86 @@ class Document:
         :return:
         """
         return [
-            Section.from_json(i, document=self)
-            for i in self.coda.list_sections(self.id, offset=offset, limit=limit)[
-                "items"
-            ]
+            Page.from_json(i, document=self)
+            for i in self.coda.list_pages(self.id, offset=offset, limit=limit)["items"]
         ]
+
+    def iter_pages(self, *, page_size: int = None) -> Iterator[Page]:
+        """Walk the doc's pages, fetching lazily."""
+        for item in self.coda.iter_items(
+            f"/docs/{self.id}/pages", page_size=page_size
+        ):
+            yield Page.from_json(item, document=self)
+
+    def get_page(self, page_id_or_name: str) -> Page:
+        """
+        Gets a `Page` by id or name.
+
+        :param page_id_or_name: ID or name of the page. Names are discouraged --
+            they are easily changed by users, and if several pages share one an
+            arbitrary page is returned.
+
+        :return:
+        """
+        js = self.coda.get_page(self.id, page_id_or_name)
+        if not js:
+            raise err.PageNotFound(f"{page_id_or_name}")
+        return Page.from_json(js, document=self)
+
+    def page_tree(self) -> PageTree:
+        """
+        The doc's page hierarchy, from a single listing.
+
+        Each page carries both its parent and its children, so no extra requests
+        are needed to work out the shape.
+        """
+        return PageTree.from_pages(self.list_pages())
+
+    def create_page(
+        self,
+        name: str = None,
+        *,
+        subtitle: str = None,
+        icon_name: str = None,
+        image_url: str = None,
+        parent_page=None,
+        content=None,
+    ) -> Dict:
+        """
+        Creates a page in this doc.
+
+        :param name: the page's title.
+
+        :param parent_page: a `Page`, a page reference, or a page id to nest
+            this page under.
+
+        :param content: a markdown string, or one of `CanvasContent`,
+            `EmbedContent`, `SyncPageContent`.
+
+        :return:
+        """
+        data = {}
+        for key, value in (
+            ("name", name), ("subtitle", subtitle), ("iconName", icon_name),
+            ("imageUrl", image_url),
+        ):
+            if value is not None:
+                data[key] = value
+        if parent_page is not None:
+            data["parentPageId"] = getattr(parent_page, "id", parent_page)
+        payload = _content_payload(content)
+        if payload is not None:
+            data["pageContent"] = payload
+        return self.coda.create_page(self.id, data)
+
+    def list_sections(self, offset: str = None, limit: int = None) -> List[Page]:
+        """Deprecated. Use :meth:`list_pages`."""
+        warnings.warn(
+            "Document.list_sections is deprecated; use Document.list_pages.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.list_pages(offset=offset, limit=limit)
 
     def list_tables(self, offset: int = None, limit: int = None, data: Dict = None) -> List[Table]:
         """

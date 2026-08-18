@@ -4,13 +4,19 @@ The raw API client: one method per endpoint, each returning a plain dict.
 
 from __future__ import annotations
 
-from typing import Dict, Iterator
+import warnings
+from typing import Dict, Iterator, Sequence
 
 import attr
 import requests
 
-from codaio import credentials
-from codaio._endpoints import ENDPOINTS
+from codaio import credentials, err
+from codaio._endpoints import (
+    ENDPOINTS,
+    PAGE_EXPORT_FORMATS,
+    looks_like_page_id,
+    page_update_idempotency,
+)
 from codaio.http import (
     DEFAULT_RETRY_POLICY,
     Idempotency,
@@ -439,11 +445,17 @@ class Coda:
             "/docs/" + doc_id, idempotency=ENDPOINTS["delete_doc"].idempotency
         )
 
-    def list_sections(self, doc_id: str, offset: int = None, limit: int = None) -> Dict:
-        """
-        Returns a list of sections in a Coda doc.
+    # ----------------------------------------------------------------------
+    # Pages
+    # ----------------------------------------------------------------------
 
-        Docs: https://coda.io/developers/apis/v1/#operation/listSections
+    def list_pages(self, doc_id: str, offset: str = None, limit: int = None) -> Dict:
+        """
+        Returns a list of pages in a doc.
+
+        The listing is flat, but each page carries both its `parent` and its
+        `children`, so one call is enough to rebuild the whole tree. See
+        :meth:`codaio.Document.page_tree`.
 
         :param doc_id: ID of the doc. Example: "AbCDeFGH"
 
@@ -455,21 +467,236 @@ class Coda:
         """
         return self.get(f"/docs/{doc_id}/pages", offset=offset, limit=limit)
 
-    def get_section(self, doc_id: str, section_id_or_name: str) -> Dict:
+    def get_page(self, doc_id: str, page_id_or_name: str) -> Dict:
         """
-        Returns details about a section.
-
-        Docs: https://coda.io/developers/apis/v1/#operation/getSection
+        Returns details about a page.
 
         :param doc_id: ID of the doc. Example: "AbCDeFGH"
 
-        :param section_id_or_name: ID or name of the section.
-            Names are discouraged because they're easily prone to being changed by users.
-            If you're using a name, be sure to URI-encode it. Example: "canvas-IjkLmnO"
+        :param page_id_or_name: ID or name of the page.
+            Names are discouraged because they're easily prone to being changed by
+            users, and if several pages share a name an arbitrary one is chosen.
+            If you're using a name, be sure to URI-encode it.
+            Example: "canvas-IjkLmnO"
 
         :return:
         """
-        return self.get(f"/docs/{doc_id}/pages/{section_id_or_name}")
+        return self.get(f"/docs/{doc_id}/pages/{page_id_or_name}")
+
+    def create_page(self, doc_id: str, data: Dict) -> Dict:
+        """
+        Creates a page in a doc.
+
+        Returns 202: the page is queued rather than created by the time this
+        returns. Requires the Doc Maker role in the doc's workspace.
+
+        :param doc_id: ID of the doc. Example: "AbCDeFGH"
+
+        :param data: a `PageCreate` body -- `name`, `subtitle`, `iconName`,
+            `imageUrl`, `parentPageId`, `pageContent`.
+
+        :return:
+        """
+        return self.post(
+            f"/docs/{doc_id}/pages", data,
+            idempotency=ENDPOINTS["create_page"].idempotency,
+        )
+
+    def update_page(self, doc_id: str, page_id_or_name: str, data: Dict) -> Dict:
+        """
+        Updates a page: its title, icon, cover, hidden flag, or its content.
+
+        Whether this may be retried is worked out from the arguments rather than
+        assumed, because it genuinely varies:
+
+        * changing only metadata, or replacing the whole page's content, ends in
+          the same state however many times it runs;
+        * appending or prepending content does not -- a replay adds it twice;
+        * replacing content *relative to an `elementId`* does not either. The
+          first attempt consumes that element and its replacement gets fresh ids,
+          so on a replay the id no longer exists -- and the API documents that a
+          *missing* `elementId` means "operate on the entire page", which would
+          turn a retried paragraph edit into replacing the whole page.
+        * addressing the page by name rather than id is never safe to replay,
+          since the API picks an arbitrary match among pages sharing a name.
+
+        :param doc_id: ID of the doc. Example: "AbCDeFGH"
+
+        :param page_id_or_name: ID or name of the page.
+
+        :param data: a `PageUpdate` body.
+
+        :return:
+        """
+        return self.put(
+            f"/docs/{doc_id}/pages/{page_id_or_name}", data,
+            idempotency=page_update_idempotency(page_id_or_name, data),
+        )
+
+    def delete_page(self, doc_id: str, page_id_or_name: str) -> Dict:
+        """
+        Deletes a page.
+
+        :param doc_id: ID of the doc. Example: "AbCDeFGH"
+
+        :param page_id_or_name: ID or name of the page. Deleting *by name* cannot
+            be retried safely, since the API picks an arbitrary match.
+
+        :return:
+        """
+        return self.delete(
+            f"/docs/{doc_id}/pages/{page_id_or_name}",
+            idempotency=(
+                Idempotency.IDEMPOTENT if looks_like_page_id(page_id_or_name)
+                else Idempotency.UNSAFE
+            ),
+        )
+
+    def get_page_content(
+        self,
+        doc_id: str,
+        page_id_or_name: str,
+        *,
+        offset: str = None,
+        limit: int = None,
+        content_format: str = None,
+    ) -> Dict:
+        """
+        Lists a page's content as styled lines.
+
+        This is the synchronous read, and it speaks only `plainText`: each line
+        comes back with a style (`h1`, `paragraph`, `bulletedList`, ...) and a
+        stable element id like `cl-2ZUJuRhNuN`, which is what you pass back when
+        editing content relative to a specific element. For Markdown or HTML you
+        want the export instead -- see :meth:`begin_page_export`.
+
+        :param doc_id: ID of the doc. Example: "AbCDeFGH"
+
+        :param page_id_or_name: ID or name of the page.
+
+        :param limit: Maximum number of results to return in this query.
+
+        :param offset: An opaque token used to fetch the next page of results.
+
+        :param content_format: Only `plainText` is accepted today.
+
+        :return:
+        """
+        data = {"contentFormat": content_format} if content_format else None
+        return self.get(
+            f"/docs/{doc_id}/pages/{page_id_or_name}/content",
+            data=data, offset=offset, limit=limit,
+        )
+
+    def delete_page_content(
+        self, doc_id: str, page_id_or_name: str, element_ids: Sequence[str] = None
+    ) -> Dict:
+        """
+        Deletes content from a page.
+
+        :param doc_id: ID of the doc. Example: "AbCDeFGH"
+
+        :param page_id_or_name: ID or name of the page.
+
+        :param element_ids: which elements to delete. **Omitting this deletes the
+            entire page's content**, which is the API's documented behaviour for
+            an omitted *or empty* list -- so an empty list is refused here rather
+            than passed on. A caller who built the list from a filter that
+            happened to match nothing would otherwise wipe the page.
+
+        :return:
+        """
+        if element_ids is not None and len(element_ids) == 0:
+            raise err.InvalidQuery(
+                "delete_page_content(element_ids=[]) would delete the entire "
+                "page's content, because the API treats an empty list the same "
+                "as an omitted one. Pass element_ids=None if that is what you "
+                "meant."
+            )
+        data = {"elementIds": list(element_ids)} if element_ids else None
+        return self.delete(
+            f"/docs/{doc_id}/pages/{page_id_or_name}/content", data,
+            idempotency=ENDPOINTS["delete_page_content"].idempotency,
+        )
+
+    def begin_page_export(
+        self, doc_id: str, page_id_or_name: str, output_format: str = "markdown"
+    ) -> Dict:
+        """
+        Starts exporting a page's content, and returns a request id to poll.
+
+        Markdown and HTML are only available this way: the synchronous content
+        listing speaks plain text only. Poll :meth:`get_page_export` until a
+        download link appears.
+
+        Note this is a write as far as rate limiting is concerned, and lands in
+        the tightest bucket -- five requests per ten seconds for doc content -- so
+        exporting many pages wants to be serial rather than fanned out.
+
+        :param doc_id: ID of the doc. Example: "AbCDeFGH"
+
+        :param page_id_or_name: ID or name of the page.
+
+        :param output_format: "markdown" or "html".
+
+        :return:
+        """
+        if output_format not in PAGE_EXPORT_FORMATS:
+            raise err.InvalidQuery(
+                f"output_format must be one of {sorted(PAGE_EXPORT_FORMATS)}, "
+                f"got {output_format!r}"
+            )
+        return self.post(
+            f"/docs/{doc_id}/pages/{page_id_or_name}/export",
+            {"outputFormat": output_format},
+            idempotency=ENDPOINTS["begin_page_export"].idempotency,
+        )
+
+    def get_page_export(self, doc_id: str, page_id_or_name: str, request_id: str) -> Dict:
+        """
+        Reports on an export started by :meth:`begin_page_export`.
+
+        `downloadLink` appears when the export finishes, and expires shortly
+        afterwards -- call this again for a fresh one rather than holding on to
+        it. Note the response's `status` is an untyped string with no documented
+        values, so gate on `downloadLink` or `error` being present instead.
+
+        :param doc_id: ID of the doc. Example: "AbCDeFGH"
+
+        :param page_id_or_name: ID or name of the page.
+
+        :param request_id: the id returned by :meth:`begin_page_export`.
+
+        :return:
+        """
+        return self.get(
+            f"/docs/{doc_id}/pages/{page_id_or_name}/export/{request_id}"
+        )
+
+    # -- deprecated spellings ---------------------------------------------
+
+    def list_sections(self, doc_id: str, offset: str = None, limit: int = None) -> Dict:
+        """
+        Deprecated. Pages were called sections when this method was named; the
+        URL has pointed at /pages for years. Use :meth:`list_pages`.
+        """
+        warnings.warn(
+            "Coda.list_sections is deprecated; use Coda.list_pages.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.list_pages(doc_id, offset=offset, limit=limit)
+
+    def get_section(self, doc_id: str, section_id_or_name: str) -> Dict:
+        """
+        Deprecated. Use :meth:`get_page`.
+        """
+        warnings.warn(
+            "Coda.get_section is deprecated; use Coda.get_page.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.get_page(doc_id, section_id_or_name)
 
     def list_folders(self, doc_id: str, offset: int = None, limit: int = None) -> Dict:
         """
