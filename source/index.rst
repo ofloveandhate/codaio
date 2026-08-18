@@ -13,6 +13,9 @@ Project home: https://github.com/blasterai/codaio
    :maxdepth: 2
    :caption: Contents:
 
+.. automodule:: codaio.credentials
+   :members:
+
 .. autoclass:: codaio.Coda
    :members:
 

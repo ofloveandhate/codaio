@@ -8,7 +8,6 @@ Click==7.0
 colorama==0.4.1
 coverage==4.5.4
 docutils==0.15.2
-envparse==0.2.0
 idna==2.8
 imagesize==1.1.0
 importlib-metadata==0.19

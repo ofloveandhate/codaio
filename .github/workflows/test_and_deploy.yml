@@ -1,5 +1,8 @@
-# This workflow will install Python dependencies, run tests and lint with a single version of Python
-# For more information see: https://help.github.com/actions/language-and-framework-guides/using-python-with-github-actions
+# Installs the package, lints, and runs the test suite.
+#
+# No publishing step: this fork is installed straight from git
+# (pip install git+https://github.com/ofloveandhate/codaio@<ref>), not from
+# PyPI, so there is nothing to deploy.
 
 name: codaio CI
 
@@ -15,17 +18,29 @@ jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
+      # run every version rather than stopping at the first failure, so one
+      # broken version does not hide the state of the others
+      fail-fast: false
       matrix:
-        python-version: [ "3.9", "3.10" ]
+        # 3.9 was what CI actually died on -- GitHub's runners no longer
+        # provide it, so the job failed at "Version 3.9 with arch x64 not
+        # found" before running anything. The floor is now 3.10.
+        python-version: [ "3.10", "3.11", "3.12", "3.13" ]
     steps:
-    - uses: actions/checkout@v2
+    - uses: actions/checkout@v4
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v1
+      uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
-    - name: Install nox and poetry
+
+    # Installing the package is itself a test: it exercises the build backend,
+    # which is how this fork is actually consumed.
+    - name: Install
       run: |
-        pip install nox poetry
+        python -m pip install --upgrade pip
+        pip install -e .
+        pip install pytest responses
+
     - name: Lint with flake8
       run: |
         pip install flake8
@@ -33,23 +48,14 @@ jobs:
         flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
         # exit-zero treats all errors as warnings. The GitHub editor is 127 chars wide
         flake8 . --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
-    - name: Test with nox
-      env:
-        CODA_API_KEY: ${{ secrets.CODA_API_KEY }}
-        TEST_DOC_ID: ${{ secrets.TEST_DOC_ID }}
-      run: |
-        nox
-        
-  deploy:
-    runs-on: ubuntu-latest
 
-    if: github.event_name == 'push'
-    needs: test
-
-    steps:
-    - uses: actions/checkout@v2
-
-    - name: Build and publish to pypi
-      uses: JRubics/poetry-publish@v2.0
-      with:
-        pypi_token: ${{ secrets.PYPI_TOKEN }}
+    # No CODA_API_KEY here on purpose. The suite is fully mocked and needs no
+    # real token, and a token in the runner environment would satisfy the
+    # credential resolution chain and mask a bug in the isolation fixtures.
+    #
+    # Nor is there a Secret Service on the runner, so `keyring` resolves to a
+    # backend that cannot store anything. The tests plant None in
+    # sys.modules["keyring"] and use an in-memory fake, so this is fine and is
+    # worth having covered: it is the same posture as a headless server.
+    - name: Test
+      run: python -m pytest -v

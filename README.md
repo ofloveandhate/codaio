@@ -26,11 +26,6 @@ or with `pip`
 pip install codaio
 ```
 
-### Config via environment variables
-The following variables will be called from environment where applicable:
-
-* `CODA_API_ENDPOINT` (default value `https://coda.io/apis/v1`)
-* `CODA_API_KEY` - your API key to use when initializing client from environment
 
 ### Quickstart using raw API
 Coda class provides a wrapper for all API methods. If API response included a JSON it will be returned as a dictionary from all methods. If it didn't a dictionary `{"status": response.status_code}` will be returned.
@@ -58,8 +53,11 @@ coda = Coda('YOUR_API_KEY')
 
 doc = Document('YOUR_DOC_ID', coda=coda)
 
-# Or initialiaze from environment by storing your API key in environment variable `CODA_API_KEY`
-doc = Document.from_environment('YOUR_DOC_ID')
+# Or let the token be resolved from the environment or the OS keyring
+doc = Document.from_credentials('YOUR_DOC_ID')
+
+# ...optionally naming which stored token to use
+doc = Document.from_credentials('YOUR_DOC_ID', keyring_profile='research')
 
 doc.list_tables()
 
@@ -147,25 +145,156 @@ table.update_row(row, [name_cell_a, value_cell_a])
 
 ### Documentation
 
-`codaio` documentation lives at [readthedocs.io](https://codaio.readthedocs.io/en/latest/index.html)
+Since this is silviana's fork of the original `codaio` repo, documentation does NOT live at [readthedocs.io](https://codaio.readthedocs.io/en/latest/index.html).  Sorry.  You will have to build it yourself.
+
+
+
+### Authentication
+
+There are options for how to get `codaio` to find the api token it will use.
+
+#### Token lookup order
+
+First one found wins:
+
+| Order | Source | Notes |
+|---|---|---|
+| 1 | `Coda("YOUR_API_KEY")` | an explicit argument always wins |
+| 2 | `CODA_API_KEY_<PROFILE>` | e.g. `CODA_API_KEY_RESEARCH`; skipped for the default profile |
+| 3 | `CODA_API_KEY` | |
+| 4 | OS keyring | entry `<keyring_service>` / `<keyring_profile>`, default `codaio` / `default` |
+
+Environment variables are checked *before* the keyring on purpose: reading a
+locked keyring can pop a blocking desktop password prompt, so an already-set
+variable should short-circuit that. It also means you can override a stored
+token for one run without touching the keyring. `Coda(...).source` tells you
+which one was actually used.
+
+If nothing supplies a token you get a `codaio.err.NoApiKey` listing every
+mechanism it tried and how to fix it.
+
+To see which backend `keyring` resolves to on a given machine, and whether
+`codaio` considers it safe to write to:
+
+```shell script
+python -c "from codaio.credentials import keyring_status; print(keyring_status())"
+python -m keyring --list-backends     # every candidate, with priorities
+```
+
+**On headless servers**, use `CODA_API_KEY` rather than the keyring. With no
+Secret Service running, the `keyring` package silently falls back to a
+backend that stores tokens base64-encoded rather than encrypted. `codaio`
+warns once if it *reads* from such a backend, but it cannot stop
+`python -m keyring set` writing to one — check `keyring_status()` first on
+any machine you are not sure about.
+
+`codaio` only ever reads the token. It has no function that stores one, and
+none that takes a token as an argument, so there is no codaio code path for
+a token to leak out of. Storing is `python -m keyring set`'s job.
+
+##### Other variables
+
+* `CODA_API_ENDPOINT` (default `https://coda.io/apis/v1`)
+* `CODA_KEYRING_PROFILE` — default keyring username
+* `CODA_KEYRING_SERVICE` — default keyring service name (default `codaio`)
+* `CODAIO_DOTENV` — see below
+
+#### Store and retrieve API token using `keyring`
+
+Silviana did some work in 2026 to make it so that a user doesn't have to leave their token in plaintext in env or in a file, where they might get spoiled by a filescanner.  
+
+This method uses the Python `keyring` package.
+
+Store your API token in the OS keyring:
+
+```shell script
+python -m keyring set codaio default    # paste your token at the prompt
+```
+
+This makes a new entry with service name `codaio`, "username" `default`.  If you use default, then the `codaio` package will pick it up when you construct a `Coda` object.
+
+Then, in Python, just construct a client
+
+```python
+from codaio import Coda
+
+coda = Coda()
+```
+
+`keyring` is installed as a dependency, and `python -m keyring` works the same
+way on Linux, macOS and Windows. It writes to the platform's own secret store:
+Secret Service / KWallet on Linux, Keychain on macOS, Credential Manager on
+Windows. The plain `keyring` command works too, but `python -m keyring`
+guarantees you are using the same environment `codaio` runs in.
+
+The keyring keeps the token **encrypted at rest** — on Linux gnome-keyring
+writes it to `~/.local/share/keyrings` encrypted with a key derived from your
+login password, so it is not readable with `cat` and not usable if it gets
+swept into a backup. It does *not* mean the token never touches disk, and it
+is no protection against a process running as you while your session is
+unlocked.
+
+##### Several tokens, one per docset
+
+Use a "profile". The profile name is the keyring entry's username, so what
+you type is what shows up in your platform's credential manager:
+
+```shell script
+python -m keyring set codaio research
+python -m keyring set codaio teaching
+```
+
+```python
+Coda(keyring_profile="research")
+Document.from_credentials("YOUR_DOC_ID", profile="teaching")
+```
+
+`codaio` does not keep its own list of your profile names — that is what the
+keyring itself is for. To see what you have stored, use your platform's
+credential manager: Seahorse or `secret-tool search service codaio` on Linux,
+Keychain Access on macOS, Credential Manager on Windows.
+
+
+
+#### Breaking change in 0.8.0
+
+Importing `codaio` used to read a `.env` file from the current working
+directory and inject it into the process environment, as a side effect of the
+import. That is gone. To opt back in, set `CODAIO_DOTENV=1` (or to a path)
+and `pip install 'codaio[dotenv]'`, or call
+`codaio.credentials.load_dotenv()` yourself.
+
+
+
+
 
 ### Running the tests
 
-The recommended way of running the test suite is to use [nox](https://nox.thea.codes/en/stable/tutorial.html).
+The suite is fully mocked with [responses](https://github.com/getsentry/responses).
+It makes no network calls and needs no API token, so it is safe to run anywhere.
 
-Once `nox`: is installed, just run the following command:
 ```shell script
-nox
+pip install -e .
+pip install pytest responses
+python -m pytest
 ```
 
-The nox session will run the test suite against python 3.8 and 3.7. It will also look for linting errors with `flake8`.
+`tests/__init__.py` puts the repo root on `sys.path`, so `codaio` does not
+strictly have to be installed for the tests to import it.
 
-You can still invoke `pytest` directly with:
+For coverage:
 ```shell script
-poetry run pytest --cov
+pip install pytest-cov
+python -m pytest --cov=codaio --cov-report=term-missing
 ```
 
-Check out the fixtures if you want to improve the testing process.
+CI runs exactly these steps against python 3.10 through 3.13, plus a `flake8`
+gate for syntax errors and undefined names.
+
+Check out the fixtures in `tests/conftest.py` if you want to improve the
+testing process. New tests should reuse `mock_json_response` /
+`mock_json_responses` and the `main_document` / `main_table` fixtures rather
+than build a second mocking style.
 
 
 #### Contributing

@@ -1,0 +1,18 @@
+{
+    "items": [
+        {
+            "id": "section_id",
+            "type": "page",
+            "href": "https://coda.io/apis/v1/docs/doc_id/pages/section_id",
+            "name": "Main Page",
+            "browserLink": "https://coda.io/d/_ddoc_id/Main-Page_susection_id"
+        },
+        {
+            "id": "section_id-1",
+            "type": "page",
+            "href": "https://coda.io/apis/v1/docs/doc_id/pages/section_id-1",
+            "name": "Second Page",
+            "browserLink": "https://coda.io/d/_ddoc_id/Second-Page_susection_id-1"
+        }
+    ]
+}

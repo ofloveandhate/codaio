@@ -1,5 +1,10 @@
 from importlib.metadata import PackageNotFoundError, version as _version
 
+from .credentials import (  # noqa
+    get_api_key,
+    get_api_key_with_source,
+    keyring_status,
+)
 from .coda import Cell, Coda, Column, Document, Row, Table  # noqa
 
 try:
