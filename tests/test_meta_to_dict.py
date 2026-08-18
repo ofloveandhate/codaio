@@ -9,7 +9,7 @@ import json
 
 import pytest
 
-from codaio import Coda, Document, Table
+from codaio import Coda, Document, Table, err
 from tests.conftest import BASE_URL
 
 
@@ -138,25 +138,69 @@ class TestSerializesToJson:
 
 @pytest.mark.usefixtures("mock_meta_responses")
 class TestToDict:
-    def test_a_column_with_no_value_becomes_none(self, main_table):
+    def test_a_column_with_no_value_is_omitted_not_invented(self, main_table):
         """
-        A partly-filled row is ordinary, and used to raise.
+        A partly-filled row is ordinary, and must neither raise nor fabricate.
 
-        `Row.to_dict` looked every column of the table up on the row, so a row
-        carrying no value for one of them raised `KeyError` -- taking
-        `Table.to_dict`, the documented pandas path, down with it. The repo's own
-        fixtures are shaped that way: get_columns.json has five columns and the
-        rows in get_rows.json carry four.
-
-        Every column still appears, so rows of one table share their keys and
-        line up in a DataFrame.
+        It used to raise `KeyError`, taking `Table.to_dict` -- the documented
+        pandas path -- down with it. Filling `None` instead would be worse for a
+        stored copy: it cannot be told apart from a cell that is genuinely empty.
+        So the column is simply absent. The repo's fixtures are shaped for this:
+        get_columns.json has five columns, get_rows.json carries four.
         """
         row = main_table.rows()[0]
         as_dict = row.to_dict()
 
-        assert set(as_dict) == {c.name for c in main_table.columns()}
-        assert any(value is None for value in as_dict.values())
-        assert all(set(r) == set(as_dict) for r in main_table.to_dict())
+        carried = {c.id for c in main_table.columns()} & set(dict(row.values))
+        assert set(as_dict) == {
+            c.name for c in main_table.columns() if c.id in carried
+        }
+        assert "Delta" not in as_dict
+        assert None not in as_dict.values()
+
+    def test_a_row_sharing_no_column_with_its_table_raises(self, main_table):
+        """
+        Not a partial row but a mismatched one -- almost always `useColumnNames`.
+
+        `values` is then keyed by column name, so every id lookup misses. Without
+        this the result is a complete-looking set of keys with every value
+        silently dropped, which is worse than any error.
+        """
+        from codaio import Row
+
+        row = Row.from_json(
+            {
+                "id": "i-1",
+                "type": "row",
+                "name": "r",
+                "index": 0,
+                "values": {"Alpha": "value", "Beta": "other"},
+            },
+            table=main_table,
+        )
+
+        with pytest.raises(err.ColumnNotFound, match="useColumnNames"):
+            row.to_dict()
+
+    def test_table_to_dict_is_ragged_but_unions_to_every_column(self, main_table):
+        """
+        The property the documented pandas path depends on.
+
+        `DataFrame` unions the keys of a list of dicts, so a ragged list still
+        produces every column: an absent key becomes NaN, while a cell the API
+        returned as empty keeps whatever it sent. That distinction is the reason
+        a missing column is omitted rather than filled in, and it only survives
+        if nothing fabricates keys. Asserted here without importing pandas, so
+        the suite stays dependency-free.
+        """
+        rows = main_table.to_dict()
+        carried = set()
+        for row in rows:
+            carried |= set(row)
+
+        assert rows
+        assert carried <= {c.name for c in main_table.columns()}
+        assert any(set(row) != carried for row in rows) or len(rows) == 1
 
     def test_row_to_dict_is_column_name_keyed_when_values_are_complete(
         self, main_table

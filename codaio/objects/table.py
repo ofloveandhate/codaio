@@ -158,6 +158,47 @@ class Table(CodaObject):
             object.__setattr__(self, "_column_index", cache)
         return cache[1]
 
+    def resolve_column(self, column: Union[str, Column]) -> Column:
+        """
+        Turn a `Column`, a column id, or a column name into a `Column`.
+
+        Raises rather than passing an unrecognised string through to the API.
+        The API accepts an id, a URL or a name wherever a column is named, so a
+        typo in a name is otherwise indistinguishable from a name that happens
+        not to match anything -- and the failure is silent: a query against a
+        column that does not exist comes back empty rather than complaining.
+
+        A URL is passed through unchecked, since it is not something codaio can
+        resolve locally.
+
+        :param column: a `Column`, a column id, or a column name.
+        """
+        if isinstance(column, Column):
+            return column
+        if not isinstance(column, str):
+            raise err.ColumnNotFound(
+                f"expected a Column, a column id or a column name, got {column!r}"
+            )
+        if "://" in column:
+            return column
+
+        by_id = self._columns_by_id()
+        if column in by_id:
+            return by_id[column]
+
+        matches = [c for c in self.columns() if c.name == column]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            raise err.AmbiguousName(
+                f"more than one column is named {column!r} in table {self.name!r}; "
+                f"use the column id instead"
+            )
+        raise err.ColumnNotFound(
+            f"no column with id or name {column!r} in table {self.name!r}. "
+            f"Available: {sorted(c.name for c in self.columns())}"
+        )
+
     def get_column_by_name(self, column_name) -> Column:
         """
         Gets a Column by id.
@@ -188,6 +229,9 @@ class Table(CodaObject):
 
         :return:
         """
+        # Resolve first: a query naming a column that does not exist comes back
+        # empty, which is indistinguishable from "no row matched".
+        self.resolve_column(column_name)
         r = self.document.coda.list_rows(
             self.document.id, self.id, query=f'"{column_name}":{json.dumps(value)}'
         )
@@ -325,6 +369,12 @@ class Table(CodaObject):
         Returns entire table as list of dicts. Intended for use with pandas:
 
         pd.DataFrame(table.to_dict())
+
+        The dicts are ragged: a row omits any column it carries no value for,
+        rather than inventing one. `DataFrame` unions the keys, so every column
+        still appears, and an absent one arrives as `NaN` while a cell that is
+        genuinely empty arrives as the empty value the API sent. Filling `None`
+        here would collapse those two into the same thing.
         """
         return [row.to_dict() for row in self.rows()]
 
@@ -460,20 +510,42 @@ class Row(CodaObject):
         """
         Returns a row as a dictionary keyed by column name.
 
-        Every column of the table appears, so rows of the same table produce
-        dicts with the same keys and line up in a DataFrame. A column the row
-        carries no value for comes back as None; it used to raise `KeyError`,
-        which also took `Table.to_dict` -- the documented pandas path -- down
-        with it whenever a row was less than completely filled in.
+        Only columns this row actually carries a value for appear. A value is
+        never invented for one that is absent: a row can legitimately be missing
+        a column -- `visibleOnly=true` is documented as returning only visible
+        rows *and columns*, and a cached column list can outlive a schema change
+        -- and recording `None` for those would be indistinguishable from a cell
+        that is genuinely empty. For a stored copy that difference matters.
 
-        Reads `values` directly instead of asking for a cell per column. Going
-        through `__getitem__` rebuilt every `Cell` on the row for each column
-        looked up, which made this quadratic in the column count for no gain.
+        Raises if the row shares no column at all with its table, which is not a
+        partial row but a mismatched one. The usual cause is `useColumnNames`:
+        `values` is then keyed by name, every id lookup misses, and the result
+        would otherwise be a full set of keys with every value silently dropped.
 
         :return:
         """
         values = dict(self.values)
-        return {column.name: values.get(column.id) for column in self.columns()}
+        if not values:
+            return {}
+
+        by_id = self._column_ids()
+        if by_id and not (values.keys() & by_id.keys()):
+            raise err.ColumnNotFound(
+                f"row {self.id!r} shares no column with table {self.table.name!r}. "
+                f"Its values are keyed by {sorted(values)[:3]}..., but the table's "
+                f"columns are {sorted(by_id)[:3]}.... If these rows were fetched "
+                f"with useColumnNames, the values are keyed by name and cannot be "
+                f"matched to columns by id."
+            )
+        return {
+            column.name: values[column.id]
+            for column in self.columns()
+            if column.id in values
+        }
+
+    def _column_ids(self) -> Dict:
+        return self.table._columns_by_id()
+
 
 
 @attr.s(auto_attribs=True, hash=True, repr=False)

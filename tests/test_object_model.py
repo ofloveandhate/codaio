@@ -302,7 +302,14 @@ class TestRawOptionalParams:
 
 
 class TestFindRowByColumnName:
+    """
+    The column name is resolved before it is used in a query, which costs one
+    columns fetch the first time. Without it a name that matches nothing returns
+    an empty list, indistinguishable from a query that legitimately found nothing.
+    """
+
     def test_returns_matching_rows(self, main_table, mock_json_response):
+        mock_json_response(TABLE_URL + "columns", "get_columns.json")
         mock_json_response(
             TABLE_URL + 'rows?useColumnNames=False&query=%22Alpha%22%3A%22value-Alpha%22',
             "get_row_by_query.json",
@@ -315,8 +322,18 @@ class TestFindRowByColumnName:
     def test_returns_empty_list_when_nothing_matches(
         self, main_table, mock_json_response
     ):
+        mock_json_response(TABLE_URL + "columns", "get_columns.json")
         mock_json_response(
             TABLE_URL + 'rows?useColumnNames=False&query=%22Alpha%22%3A%22nope%22',
             "empty.json",
         )
         assert main_table.find_row_by_column_name_and_value("Alpha", "nope") == []
+
+    def test_a_column_name_that_does_not_exist_raises(
+        self, main_table, mock_json_response
+    ):
+        """Rather than querying for it and returning an empty list."""
+        mock_json_response(TABLE_URL + "columns", "get_columns.json")
+
+        with pytest.raises(err.ColumnNotFound, match="Nonexistent"):
+            main_table.find_row_by_column_name_and_value("Nonexistent", "x")
