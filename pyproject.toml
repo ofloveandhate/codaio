@@ -20,15 +20,12 @@ decorator = "^5.1.1"
 # recommended way to use this library, so it has to work from a plain
 # `pip install codaio`. On Linux this pulls SecretStorage and cryptography.
 keyring = "^25.0"
-# Genuinely optional, and both need a deliberate opt-in anyway: python-dotenv
-# only matters if you set CODAIO_DOTENV, and httpx only if you set USE_HTTPX
-# (which coda.py has always soft-imported but never declared).
+# Genuinely optional, and needs a deliberate opt-in anyway: python-dotenv only
+# matters if you set CODAIO_DOTENV.
 python-dotenv = {version = "^1.0", optional = true}
-httpx = {version = "^0.27", optional = true}
 
 [tool.poetry.extras]
 dotenv = ["python-dotenv"]
-httpx = ["httpx"]
 
 # `dev-dependencies` is the deprecated spelling; this is the group form.
 [tool.poetry.group.dev.dependencies]

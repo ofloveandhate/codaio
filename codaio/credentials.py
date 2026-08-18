@@ -329,7 +329,7 @@ def env_bool(name: str, default: bool = False) -> bool:
     Read a boolean environment variable.
 
     Written out rather than using ``bool(os.environ.get(...))`` because that
-    would make ``USE_HTTPX=0`` truthy, which is how the previous envparse
+    would make ``CODAIO_DOTENV=0`` truthy, which is how the previous envparse
     behaviour would have silently changed on removal.
     """
     raw = os.environ.get(name)

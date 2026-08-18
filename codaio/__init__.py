@@ -5,7 +5,11 @@ from .credentials import (  # noqa
     get_api_key_with_source,
     keyring_status,
 )
-from .coda import Cell, Coda, Column, Document, Row, Table  # noqa
+from .client import Coda  # noqa
+from .objects.base import CodaObject  # noqa
+from .objects.document import Document, Folder  # noqa
+from .objects.page import Section  # noqa
+from .objects.table import Cell, Column, Row, Table  # noqa
 
 try:
     __version__ = _version("codaio")

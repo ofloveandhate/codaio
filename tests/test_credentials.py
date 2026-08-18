@@ -328,7 +328,7 @@ class TestPaginationOrigin:
         assert coda.list_docs()["items"] == [{"a": 1}, {"b": 2}]
 
     def test_default_port_is_equivalent_to_implicit(self):
-        from codaio.coda import assert_same_origin
+        from codaio.http import assert_same_origin
 
         assert_same_origin(
             "https://coda.io:443/apis/v1/docs", "https://coda.io/apis/v1"
@@ -338,16 +338,16 @@ class TestPaginationOrigin:
 class TestEnvBool:
     @pytest.mark.parametrize("raw", ["0", "false", "False", "no", "off", "", "  "])
     def test_falsey(self, monkeypatch, raw):
-        monkeypatch.setenv("USE_HTTPX", raw)
-        assert credentials.env_bool("USE_HTTPX", False) is False
+        monkeypatch.setenv("CODAIO_DOTENV", raw)
+        assert credentials.env_bool("CODAIO_DOTENV", False) is False
 
     @pytest.mark.parametrize("raw", ["1", "true", "TRUE", "yes", "y", "on"])
     def test_truthy(self, monkeypatch, raw):
-        monkeypatch.setenv("USE_HTTPX", raw)
-        assert credentials.env_bool("USE_HTTPX", False) is True
+        monkeypatch.setenv("CODAIO_DOTENV", raw)
+        assert credentials.env_bool("CODAIO_DOTENV", False) is True
 
     def test_unset_uses_default(self):
-        assert credentials.env_bool("USE_HTTPX", True) is True
+        assert credentials.env_bool("CODAIO_DOTENV", True) is True
 
 
 class TestEndpoint:

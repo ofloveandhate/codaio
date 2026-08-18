@@ -83,11 +83,16 @@ def test_every_public_endpoint_is_covered():
         "get",
         "post",
         "put",
+        "patch",
         "delete",
         "from_environment",
+        # pagination primitives rather than endpoints; covered by
+        # tests/test_pagination_lazy.py
+        "iter_pages",
+        "iter_items",
     }
 
-    tree = ast.parse((pathlib.Path(__file__).parent.parent / "codaio" / "coda.py").read_text())
+    tree = ast.parse((pathlib.Path(__file__).parent.parent / "codaio" / "client.py").read_text())
     cls = next(
         n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "Coda"
     )
@@ -113,13 +118,21 @@ def test_every_public_endpoint_is_covered():
 
 
 class TestPagination:
-    def test_limit_is_capped_at_the_api_maximum(self, coda, mocked_responses):
-        from codaio.coda import MAX_GET_LIMIT
+    def test_limit_is_passed_through_rather_than_capped(self, coda, mocked_responses):
+        """
+        A caller's `limit` reaches the API unchanged.
+
+        It used to be rewritten down to MAX_GET_LIMIT, so asking for 700 results
+        quietly became a request for 200 and the caller was given no way to tell
+        the difference. The API documents that its own maximum varies by endpoint
+        and may change at any time, so the server's answer is the only honest one.
+        """
+        from codaio.client import MAX_GET_LIMIT
 
         mocked_responses.add("GET", BASE_URL + "/docs", json={"items": []})
         coda.list_docs(limit=MAX_GET_LIMIT + 500)
 
-        assert f"limit={MAX_GET_LIMIT}" in mocked_responses.calls[0].request.url
+        assert f"limit={MAX_GET_LIMIT + 500}" in mocked_responses.calls[0].request.url
 
     def test_offset_becomes_a_page_token(self, coda, mocked_responses):
         mocked_responses.add("GET", BASE_URL + "/docs", json={"items": []})

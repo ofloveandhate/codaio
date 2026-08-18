@@ -292,7 +292,7 @@ class TestRawOptionalParams:
         assert Document.from_environment("doc_id").coda.api_key == "tok"
 
     def test_document_list_sections(self, main_document, mock_json_response):
-        from codaio.coda import Section
+        from codaio.objects.page import Section
 
         mock_json_response(BASE_URL + "/docs/doc_id/pages", "get_sections.json")
         sections = main_document.list_sections()
