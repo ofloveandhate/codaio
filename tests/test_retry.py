@@ -9,9 +9,9 @@ to try is the caller's business, and is what `RetryPolicy` expresses.
 Nothing here sleeps: every policy is built with the `fake_clock` fixture.
 """
 
+import attr
 import pytest
 import requests
-import responses
 
 from codaio import err
 from codaio.http import (
@@ -185,6 +185,59 @@ class TestPersistence:
         mocked_responses.add("GET", URL, status=429, json={})
 
         assert run(Idempotency.SAFE, None).status_code == 429
+        assert len(mocked_responses.calls) == 1
+
+
+class TestClassificationReachesTheWire:
+    """
+    The registry is not decorative: what it declares is what happens.
+
+    Both calls below are writes that fail the same way. The only thing that
+    differs is how codaio classifies them, and that difference has to be visible
+    in the number of requests actually made.
+    """
+
+    def test_an_unsafe_write_is_not_replayed(self, retrying_coda, mocked_responses):
+        url = "https://coda.io/apis/v1/docs/d1/tables/t1/rows"
+        for _ in range(3):
+            mocked_responses.add("POST", url, status=500, json={"message": "boom"})
+
+        with pytest.raises(err.ServerError):
+            retrying_coda.upsert_row("d1", "t1", {"rows": []})
+
+        assert len(mocked_responses.calls) == 1
+
+    def test_an_idempotent_write_is_replayed(self, retrying_coda, mocked_responses):
+        url = "https://coda.io/apis/v1/docs/d1/tables/t1/rows/r1"
+        mocked_responses.add("PUT", url, status=500, json={"message": "boom"})
+        mocked_responses.add("PUT", url, status=202, json={"requestId": "abc"})
+
+        result = retrying_coda.update_row("d1", "t1", "r1", {"row": {"cells": []}})
+
+        assert result["requestId"] == "abc"
+        assert len(mocked_responses.calls) == 2
+
+    def test_changing_the_registry_changes_the_behaviour(
+        self, retrying_coda, mocked_responses, monkeypatch
+    ):
+        """If this ever passes with the classification ignored, the table is a lie."""
+        from codaio import _endpoints
+
+        url = "https://coda.io/apis/v1/docs/d1/tables/t1/rows/r1"
+        mocked_responses.add("PUT", url, status=500, json={"message": "boom"})
+        mocked_responses.add("PUT", url, status=202, json={"requestId": "abc"})
+
+        monkeypatch.setitem(
+            _endpoints.ENDPOINTS,
+            "update_row",
+            attr.evolve(
+                _endpoints.ENDPOINTS["update_row"], idempotency=Idempotency.UNSAFE
+            ),
+        )
+
+        with pytest.raises(err.ServerError):
+            retrying_coda.update_row("d1", "t1", "r1", {"row": {"cells": []}})
+
         assert len(mocked_responses.calls) == 1
 
 

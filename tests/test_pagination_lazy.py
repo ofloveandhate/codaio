@@ -8,7 +8,6 @@ no way to notice.
 """
 
 import pytest
-import responses
 
 from codaio import err
 

@@ -10,6 +10,7 @@ import attr
 import requests
 
 from codaio import credentials
+from codaio._endpoints import ENDPOINTS
 from codaio.http import (
     DEFAULT_RETRY_POLICY,
     Idempotency,
@@ -410,7 +411,7 @@ class Coda:
         if tz:
             data["timezone"] = tz
 
-        return self.post("/docs", data)
+        return self.post("/docs", data, idempotency=ENDPOINTS["create_doc"].idempotency)
 
     def get_doc(self, doc_id: str) -> Dict:
         """
@@ -434,7 +435,9 @@ class Coda:
 
         :return:
         """
-        return self.delete("/docs/" + doc_id)
+        return self.delete(
+            "/docs/" + doc_id, idempotency=ENDPOINTS["delete_doc"].idempotency
+        )
 
     def list_sections(self, doc_id: str, offset: int = None, limit: int = None) -> Dict:
         """
@@ -707,7 +710,11 @@ class Coda:
                 "keyColumns": ["c-bCdeFgh"]
             }
         """
-        return self.post(f"/docs/{doc_id}/tables/{table_id_or_name}/rows", data)
+        return self.post(
+            f"/docs/{doc_id}/tables/{table_id_or_name}/rows",
+            data,
+            idempotency=ENDPOINTS["upsert_row"].idempotency,
+        )
 
     def get_row(self, doc_id: str, table_id_or_name: str, row_id_or_name: str, data: Dict = None) -> Dict:
         """
@@ -759,7 +766,9 @@ class Coda:
         :param data: Example: {"row": {"cells": [{"column": "c-tuVwxYz", "value": "$12.34"}]}}
         """
         return self.put(
-            f"/docs/{doc_id}/tables/{table_id_or_name}/rows/{row_id_or_name}", data
+            f"/docs/{doc_id}/tables/{table_id_or_name}/rows/{row_id_or_name}",
+            data,
+            idempotency=ENDPOINTS["update_row"].idempotency,
         )
 
     def delete_row(self, doc_id, table_id_or_name: str, row_id_or_name: str) -> Dict:
@@ -786,7 +795,8 @@ class Coda:
             an arbitrary one will be selected.
         """
         return self.delete(
-            f"/docs/{doc_id}/tables/{table_id_or_name}/rows/{row_id_or_name}"
+            f"/docs/{doc_id}/tables/{table_id_or_name}/rows/{row_id_or_name}",
+            idempotency=ENDPOINTS["delete_row"].idempotency,
         )
 
     def list_formulas(self, doc_id: str, offset: int = None, limit: int = None) -> Dict:
