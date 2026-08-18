@@ -19,6 +19,18 @@ from .objects.base import (  # noqa
 from .objects.document import Document, Folder  # noqa
 from .objects.page import Section  # noqa
 from .objects.table import Cell, Column, Row, Table  # noqa
+from .values import (  # noqa
+    CodaValue,
+    ImageValue,
+    LinkValue,
+    MoneyValue,
+    PersonValue,
+    RowValue,
+    UnknownValue,
+    parse_value,
+    serialize,
+    unwrap_rich_text,
+)
 
 try:
     __version__ = _version("codaio")

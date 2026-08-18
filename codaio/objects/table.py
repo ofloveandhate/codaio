@@ -21,6 +21,10 @@ from codaio.objects.base import (
     column_format,
     ref,
 )
+from codaio.values import parse_value, serialize, unwrap_rich_text
+
+#: How long `Cell.value = x` waits for a write to become readable.
+_WRITE_SETTLE_TIMEOUT = 60.0
 
 
 @attr.s(auto_attribs=True, eq=False, repr=False)
@@ -550,13 +554,22 @@ class Row(CodaObject):
 
 @attr.s(auto_attribs=True, hash=True, repr=False)
 class Cell:
+    """
+    One column's value on one row.
+
+    `value` is the typed reading of the cell: a scalar comes back as a scalar,
+    while an image, person, link, currency or row reference comes back as the
+    matching class from :mod:`codaio.values`. `raw_value` is what the API
+    actually sent, untouched.
+    """
+
     column: Union[str, Column]
     value_storage: Any
     row: Row = attr.ib(default=None)
 
     @property
     def name(self):
-        return self.column.name
+        return self.column.name if isinstance(self.column, Column) else self.column
 
     @property
     def table(self):
@@ -567,13 +580,47 @@ class Cell:
         return self.table.document
 
     def __repr__(self):
-        return (
-            f"Cell(column={self.column.name}, row={self.row.name}, value={self.value})"
-        )
+        row = getattr(self.row, "name", None)
+        return f"Cell(column={self.name}, row={row}, value={self.value!r})"
+
+    @property
+    def raw_value(self):
+        """Exactly what the API sent, with no interpretation."""
+        return self.value_storage
 
     @property
     def value(self):
+        """
+        The cell's value, typed.
+
+        Under `valueFormat=rich` a structured cell arrives as JSON-LD; this is
+        that turned into an :class:`~codaio.values.ImageValue`,
+        :class:`~codaio.values.PersonValue` and so on. Scalars are returned as
+        they are, and a `@type` codaio does not know becomes an
+        :class:`~codaio.values.UnknownValue` rather than an error.
+        """
+        return parse_value(self.value_storage)
+
+    @property
+    def markdown(self):
+        """
+        A rich text value as the API sent it -- Markdown, fence and all.
+
+        Text read with `valueFormat=rich` comes back as Markdown, and a value
+        with no formatting is wrapped in triple backticks so that it round trips.
+        """
         return self.value_storage
+
+    @property
+    def text(self):
+        """
+        A rich text value with the ``` fence stripped.
+
+        Lossy on purpose, and never applied automatically: a cell whose Markdown
+        genuinely is a fenced code block cannot be told apart from a plain string
+        that was wrapped. Use it when you want text rather than Markdown.
+        """
+        return unwrap_rich_text(self.value_storage)
 
     @property
     def column_id_or_name(self):
@@ -584,14 +631,35 @@ class Cell:
 
     @value.setter
     def value(self, value):
-        data = {"row": {"cells": [{"column": self.column.id, "value": value}]}}
+        data = {
+            "row": {
+                "cells": [
+                    {"column": self.column_id_or_name, "value": serialize(value)}
+                ]
+            }
+        }
         self.document.coda.update_row(
             self.document.id, self.table.id, self.row.id, data=data
         )
-        self.value_storage = value
+        self.value_storage = serialize(value)
 
-        new_value = None
-        while new_value != value:
+        # Writes are applied asynchronously, so the value is not readable back
+        # immediately. This waits for it, but only for a while: the loop used to
+        # have no bound at all, and it compares what the API stored rather than
+        # what was sent, because Coda coerces values to the column's format
+        # ("$12.34" becomes 12.34, dates are reformatted) and an exact match may
+        # never arrive. Phase-appropriate stopgap: `mutationStatus` is the right
+        # primitive and replaces this.
+        deadline = time.monotonic() + _WRITE_SETTLE_TIMEOUT
+        while time.monotonic() < deadline:
             self.row.refresh()
-            new_value = self.row.get_cell_by_column_id(self.column.id).value
+            settled = self.row.get_cell_by_column_id(self.column_id_or_name)
+            if settled.raw_value == self.value_storage:
+                return
             time.sleep(0.3)
+        raise err.MutationTimeout(
+            f"wrote {self.name!r} on row {self.row.id!r} but the new value was "
+            f"not readable back within {_WRITE_SETTLE_TIMEOUT:g}s. The edit was "
+            f"accepted and may still be applied; Coda also coerces values to the "
+            f"column's format, so what it stores may differ from what was sent."
+        )
