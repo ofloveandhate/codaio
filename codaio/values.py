@@ -385,7 +385,7 @@ _FENCED = re.compile(r"\A```(.*)```\Z", re.DOTALL)
 
 def unwrap_rich_text(text: str) -> str:
     """
-    Strip the ``` fence that ``valueFormat=rich`` puts around unformatted text.
+    Strip the triple-backtick fence ``valueFormat=rich`` puts around plain text.
 
     Rich text comes back as Markdown, and a value with no formatting in it is
     returned fully escaped -- wrapped in triple backticks -- so that it round

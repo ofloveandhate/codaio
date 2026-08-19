@@ -13,14 +13,50 @@ Project home: https://github.com/blasterai/codaio
    :maxdepth: 2
    :caption: Contents:
 
+Credentials
+-----------
+
 .. automodule:: codaio.credentials
    :members:
+
+The client
+----------
 
 .. autoclass:: codaio.Coda
    :members:
 
 .. autoclass:: codaio.Document
    :members:
+
+.. autoclass:: codaio.Folder
+   :members:
+
+Pages
+-----
+
+.. autoclass:: codaio.Page
+   :members:
+
+.. autoclass:: codaio.PageTree
+   :members:
+
+.. autoclass:: codaio.PageExport
+   :members:
+
+.. autoclass:: codaio.ContentItem
+   :members:
+
+.. autoclass:: codaio.CanvasContent
+   :members:
+
+.. autoclass:: codaio.EmbedContent
+   :members:
+
+.. autoclass:: codaio.SyncPageContent
+   :members:
+
+Tables, rows and cells
+----------------------
 
 .. autoclass:: codaio.Table
    :members:
@@ -33,6 +69,51 @@ Project home: https://github.com/blasterai/codaio
 
 .. autoclass:: codaio.Cell
    :members:
+
+Writes
+------
+
+.. autoclass:: codaio.Mutation
+   :members:
+
+.. autoclass:: codaio.MutationGroup
+   :members:
+
+Cell values
+-----------
+
+.. automodule:: codaio.values
+   :members:
+   :exclude-members: CodaValue
+
+.. autoclass:: codaio.CodaValue
+   :members:
+
+The object model's base
+-----------------------
+
+.. autoclass:: codaio.CodaObject
+   :members:
+
+.. autoclass:: codaio.Reference
+   :members:
+
+.. autoclass:: codaio.ColumnFormat
+   :members:
+
+HTTP, retries and errors
+------------------------
+
+.. automodule:: codaio.http
+   :members:
+   :exclude-members: Idempotency
+
+.. autoclass:: codaio.http.Idempotency
+   :members:
+
+.. automodule:: codaio.err
+   :members:
+   :show-inheritance:
 
 
 Indices and tables

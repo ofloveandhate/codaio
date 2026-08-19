@@ -13,8 +13,16 @@
 import sys
 from pathlib import Path
 
-ROOT_DIR = Path(__file__).parent.parent
+# conf.py lives at docs/source/, so the repo root is three levels up. autodoc
+# imports codaio from there, and gets nothing useful if this is wrong.
+ROOT_DIR = Path(__file__).parent.parent.parent
 CODAIO_DIR = ROOT_DIR / "codaio"
+
+if not CODAIO_DIR.is_dir():  # pragma: no cover - a build-time sanity check
+    raise RuntimeError(
+        f"expected the codaio package at {CODAIO_DIR}; conf.py's idea of the "
+        f"repo root is wrong, so autodoc would silently document nothing."
+    )
 
 sys.path.insert(0, ROOT_DIR.as_posix())
 
@@ -51,4 +59,5 @@ html_theme = "sphinx_rtd_theme"
 # Add any paths that contain custom static files (such as style sheets) here,
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".
-html_static_path = ["_static"]
+# No static assets of our own; pointing at a missing directory only warns.
+html_static_path = []

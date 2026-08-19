@@ -39,7 +39,7 @@ Lint / format / docs (matching CI and the declared dev deps):
 ```bash
 flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics   # the CI gate
 black codaio tests
-make html          # sphinx: source/ -> build/, autodoc only
+cd docs && make html   # sphinx: docs/source -> docs/build, autodoc only
 ```
 
 CI (`.github/workflows/test_and_deploy.yml`) runs `pip install -e .` + pytest on Python

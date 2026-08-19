@@ -818,7 +818,7 @@ class Cell:
     @property
     def text(self):
         """
-        A rich text value with the ``` fence stripped.
+        A rich text value with the triple-backtick fence stripped.
 
         Lossy on purpose, and never applied automatically: a cell whose Markdown
         genuinely is a fenced code block cannot be told apart from a plain string

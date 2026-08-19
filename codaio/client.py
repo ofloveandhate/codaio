@@ -978,11 +978,15 @@ class Coda:
             Names are discouraged because they're easily prone to being changed by users.
             If you're using a name, be sure to URI-encode it. Example: "grid-pqRst-U"
 
-        :param data:
-            {
-                "rows": [{"cells": [{"column": "c-tuVwxYz", "value": "$12.34"}]}],
-                "keyColumns": ["c-bCdeFgh"]
-            }
+        :param data: the request body, for example::
+
+                {
+                    "rows": [{"cells": [{"column": "c-tuVwxYz", "value": "$12.34"}]}],
+                    "keyColumns": ["c-bCdeFgh"]
+                }
+
+            Prefer :meth:`codaio.Table.upsert_row`, which builds this from
+            `Cell` objects and checks the column names before sending.
         """
         return self.post(
             f"/docs/{doc_id}/tables/{table_id_or_name}/rows",
@@ -1060,7 +1064,7 @@ class Coda:
 
         :param table_id_or_name: ID or name of the table.
             Names are discouraged because they're easily prone to being changed by users.
-        If you're using a name, be sure to URI-encode it. Example: "grid-pqRst-U"
+            If you're using a name, be sure to URI-encode it. Example: "grid-pqRst-U"
 
         :param row_id_or_name: ID or name of the row.
             Names are discouraged because they're easily prone to being changed by users.
