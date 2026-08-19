@@ -159,19 +159,47 @@ def capabilities(live_coda, live_doc):
 
 
 @pytest.fixture(scope="session")
-def scratch_page(live_doc):
+def run_stamp():
+    r"""
+    When this run happened, for stamping everything it leaves behind.
+
+    Since nothing is cleaned up, a doc accumulates the debris of every run that
+    has ever touched it. Without a stamp those are indistinguishable, and there
+    is no way to tell what a given run did from what the run before it did.
+
+    Local time, to the second, so it reads naturally in the Coda UI and sorts.
+
+    >>> import re
+    >>> re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", _stamp()) is not None
+    True
+    """
+    return _stamp()
+
+
+def _stamp():
+    import datetime as dt
+
+    return dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+
+@pytest.fixture(scope="session")
+def scratch_page(live_doc, run_stamp):
     """
     A page to hang this run's pages under, so churn is separable from fixtures.
+
+    Named for the run, which makes tidying up a doc a matter of deleting one
+    dated page rather than picking through a pile of identically-named ones.
 
     Created once per session and left behind, like everything else here.
     """
     # Waits, unlike most writes here: everything else in the session hangs off
     # this page, so it has to exist before they run.
-    mutation = live_doc.create_page("codaio integration scratch")
+    mutation = live_doc.create_page(f"codaio run {run_stamp}")
     mutation.wait()
     page_id = mutation.id
     if not page_id:
         pytest.skip("the API did not report the new page's id")
+    print(f"\nthis run's pages are under 'codaio run {run_stamp}'")
     return live_doc.get_page(page_id)
 
 
