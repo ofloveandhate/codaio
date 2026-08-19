@@ -134,6 +134,24 @@ def test_the_guard_notices_an_unmarked_example():
     assert unmarked_example_lines("Prose.\n\n    >>> table.rows()\n") == []
 
 
+def pyproject_pytest_settings() -> str:
+    """
+    The `[tool.pytest.ini_options]` block, as text.
+
+    Read rather than parsed. `tomllib` is only in the standard library from
+    3.11, and codaio supports 3.10 -- which is exactly the version CI failed on
+    when this test first parsed the file. Adding a TOML library as a test
+    dependency to find two substrings would be a poor trade, and the thing this
+    guards against is somebody deleting the settings, which reading catches just
+    as well.
+    """
+    text = (CODAIO.parent / "pyproject.toml").read_text()
+    start = text.index("[tool.pytest.ini_options]")
+    rest = text[start + 1:]
+    end = rest.find("\n[")
+    return rest if end == -1 else rest[:end]
+
+
 def test_the_doctests_actually_run():
     """
     A guard on the configuration rather than the code.
@@ -142,11 +160,7 @@ def test_the_doctests_actually_run():
     If that were dropped, every example in the library would silently stop being
     verified and nothing else would fail.
     """
-    import tomllib
+    settings = pyproject_pytest_settings()
 
-    config = tomllib.loads(
-        (CODAIO.parent / "pyproject.toml").read_text()
-    )["tool"]["pytest"]["ini_options"]
-
-    assert "--doctest-modules" in config["addopts"]
-    assert "codaio" in config["testpaths"]
+    assert "--doctest-modules" in settings
+    assert "codaio" in settings
