@@ -47,9 +47,13 @@ sphinx-rtd-theme = "^3.0"
 # from the code it documents and is worse than none, since it is quoted with
 # confidence. Anything needing a live client is written as a `.. code-block::`
 # instead, which doctest ignores and Sphinx still renders.
-addopts = "--doctest-modules"
+addopts = "--doctest-modules -m 'not conformance and not integration'"
 testpaths = ["tests", "codaio"]
 doctest_optionflags = "NORMALIZE_WHITESPACE ELLIPSIS"
+markers = [
+    "conformance: compares codaio to the published OpenAPI spec. Needs network; run with -m conformance.",
+    "integration: runs against a real Coda doc. Needs a doc-scoped token; run with -m integration.",
+]
 
 [tool.coverage.paths]
 source = ["src", "*/site-packages"]

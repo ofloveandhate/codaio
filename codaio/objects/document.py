@@ -344,9 +344,18 @@ class Document:
         self._absorb(self.coda.get(self.href + "/"))
         return self
 
-    def delete(self) -> Dict:
-        """Delete this doc."""
-        return self.coda.delete_doc(self.id)
+    def delete(self) -> Mutation:
+        """
+        Delete this doc.
+
+        Queued rather than done on return, like other writes -- the API answers
+        202. Wait on the result when that matters.
+
+        .. code-block:: python
+
+            doc.delete().wait()
+        """
+        return Mutation.from_response(self.coda, self.coda.delete_doc(self.id))
 
     # ------------------------------------------------------------------
     # Sharing

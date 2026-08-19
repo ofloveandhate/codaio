@@ -219,9 +219,11 @@ ENDPOINTS: Dict[str, Endpoint] = {
         "PATCH", "/docs/{docId}", args=("doc_id",),
         idempotency=Idempotency.IDEMPOTENT,
     ),
+    # 202: deleting a doc is queued like other writes, not done on return.
+    # The conformance check found this; codaio had it as 200.
     "delete_doc": Endpoint(
         "DELETE", "/docs/{docId}", args=("doc_id",),
-        idempotency=Idempotency.IDEMPOTENT,
+        idempotency=Idempotency.IDEMPOTENT, success=(202,),
     ),
 
     # -- Pages (still spelled "section" in the method names) ---------------
