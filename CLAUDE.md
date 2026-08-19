@@ -17,21 +17,28 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
-**Poetry and nox do not work here and fixing them is out of scope.** (`poetry.lock` is from
-2023 and resolved for `^3.9`.) Use the `codaio` micromamba env instead:
+**Poetry and nox do not work here and fixing them is out of scope.** `poetry.lock` is from
+2023 and resolved for `^3.9`, and `noxfile.py` was deleted. Use an environment you build
+yourself:
 
 ```bash
-micromamba run -n codaio python -m pytest              # full suite (~187 tests, <1s)
-micromamba run -n codaio python -m pytest tests/test_credentials.py::test_name -v
-micromamba run -n codaio python -m pytest -k keyring
-micromamba run -n codaio python -m pytest --cov=codaio --cov-report=term-missing
+python -m pip install -e .
+python -m pip install pytest responses          # what CI installs
 ```
 
-The env was created as:
+```bash
+python -m pytest                                     # mocked suite + doctests
+python -m pytest tests/test_credentials.py::test_name -v
+python -m pytest -k keyring
+python -m pytest --cov=codaio --cov-report=term-missing
+```
+
+Two suites do not run by default. See `docs/source/testing.rst` for the whole picture,
+including how to set up a doc and a scoped token for the live one.
 
 ```bash
-micromamba create -n codaio -c conda-forge python=3.12 \
-    requests attrs python-dateutil inflection decorator pytest responses keyring
+python -m pytest -m conformance     # compares codaio to the published OpenAPI spec
+python -m pytest -m integration     # runs against a real Coda doc
 ```
 
 Lint / format / docs (matching CI and the declared dev deps):
@@ -48,68 +55,92 @@ credential in the runner can't mask a bug in the test isolation fixtures.
 
 ## Architecture
 
-Three modules, and the layering between them matters.
+Layered, and the layering is enforced by `tests/test_module_boundaries.py`. Each layer may
+only import from the ones below it, so a circular import cannot be introduced by accident.
 
-### `codaio/credentials.py` — token resolution
+```
+err.py                     nothing
+credentials.py             err                     token resolution, usable alone
+http.py                    err                     retry, origin guards, status mapping
+_endpoints.py              err, http               one description of every endpoint
+values.py                  err, http               typed cell values
+client.py                  the above               the raw API client
+objects/                   the above               the object model
+coda.py                    everything              a re-exporting compatibility shim
+```
 
-Standalone by design: **it must not import `codaio.coda`** (circular import, and other tools
-depend on the resolution logic alone). Resolution chain, first hit wins:
+`objects/document.py` is the one object-model module allowed to import the client at
+runtime, because `Document.from_credentials` builds one. The client never imports the
+object model back — that direction is what keeps this acyclic, and is its own test.
 
-1. explicit argument → 2. `CODA_API_KEY_<PROFILE>` → 3. `CODA_API_KEY` → 4. OS keyring
-   (`keyring_service`/`keyring_profile`, default `codaio`/`default`).
+### Rules that look arbitrary and are not
 
-Env vars are checked *before* the keyring on purpose: reading a locked keyring can pop a
-blocking desktop password prompt. Failure raises `err.NoApiKey` listing every `Attempt`.
+**The token is never in an attrs field.** `Coda.__attrs_post_init__` resolves it, stores it
+on `self._token`, and sets `self._api_key = None`, because `attr.asdict()` reads fields
+directly and ignores `repr=False` — so `attr.asdict(some_document)` would recurse into the
+`Coda` and expose it.
 
-This module only ever **reads** tokens. There is no function that stores one and none that
-takes a token as an argument — that is the security posture, not an oversight. Storing is
-`python -m keyring set codaio <profile>`'s job. `SECURE_BACKENDS` / `INSECURE_BACKENDS` are
-explicit allowlists because `keyring`'s own `priority` ranks encrypted backends below
-plaintext ones; `keyring_status()` reports what a machine resolves to.
+**`assert_same_origin` guards every pagination hop.** `nextPageLink` comes from the response
+*body*, so `requests`' cross-host stripping of the Authorization header never applies.
 
-### `codaio/coda.py` — raw client, then object model
+**`fetch_untrusted` takes no credential argument.** Attachment and export URLs live on a
+content host. It is not an origin comparison but an absolute rule: there is no code path by
+which a token could be attached. `tests/test_attachments.py` exists solely to keep it that
+way.
 
-**`Coda`** is a thin 1:1 wrapper over the REST endpoints; every method returns a plain dict.
+**Unknown JSON fields are kept, never fatal.** `CodaObject.from_json` partitions rather than
+splatting; anything unmodelled lands on `.raw` and is reachable via `.field()`. Coda's own
+spec has enum values missing from its discriminator mapping (`email`, `link`, `reaction`),
+so a strict client fails on an ordinary table.
 
-- `get`/`post`/`put`/`delete` return a raw `requests.Response` (or a *list* of them for a
-  paginated GET). The `@handle_response` decorator converts that to a dict, concatenates
-  `items` across pages, and maps status codes onto `codaio.err` exceptions. A new HTTP
-  method needs that decorator or callers get a `Response` object.
-- Pagination follows `nextPageLink` **from the response body**, which sidesteps `requests`'
-  cross-host `Authorization` stripping — hence `assert_same_origin()` guarding every hop.
-  Don't remove it.
-- The token is never held in an attrs field: `__attrs_post_init__` resolves it, stores it on
-  `self._token`, and sets `self._api_key = None`, because `attr.asdict()` reads fields
-  directly and ignores `repr=False`, so `attr.asdict(some_document)` would recurse into the
-  `Coda` and expose it. Preserve this whenever touching `Coda`'s attrs.
-- `USE_HTTPX=1` swaps `requests` for `httpx` at import time (eventlet compatibility).
+**Identity is `(class, id)`, stated rather than derived.** Deriving `__hash__` from all
+fields raised `TypeError` for any table with a `filter` or any row read as `rich`.
 
-**Object model** — `Document` → `Table` → `Row`/`Column` → `Cell`, all `attr.s` classes.
-`CodaObject.from_json` camelCase→snake_case via `inflection` and drops `parent`/`format`,
-so **attrs field names must be the snake_case of the API's JSON keys** or construction
-raises `TypeError`. Every object holds a back-reference (`document`, `table`, `row`) and
-routes all I/O through `document.coda`, so there is exactly one HTTP path.
+**Whether a request may be replayed is codaio's decision, not the caller's.** It depends on
+the arguments, not just the verb — an upsert without `keyColumns`, a page update with an
+`elementId`, anything addressed by name rather than id. `_endpoints.py` holds the
+classification and the retry layer reads it; `tests/test_retry.py` fails if it stops being
+load-bearing.
 
-Two conveniences that are easy to miss: `meta_to_dict()` exists on each level and chains via
-`super()` + PEP 584 `|`, deliberately excluding the parent object unless asked; and
-`Cell.value`'s setter *polls* `row.refresh()` until the write is visible, because Coda's API
-is eventually consistent — that makes cell assignment blocking and slow.
+### Writes are accepted, not applied
 
-`Document.from_credentials(doc_id, keyring_profile=...)` is the preferred entry point;
-`from_environment` is the older name kept working.
+Every mutating endpoint answers 202. Measured against a real doc, a row update is applied
+after ~41s and a page creation after ~60 — not the "several seconds" the API documents. So:
+
+- object-model writes return a `Mutation`; nothing waits by default;
+- batching is the only sensible pattern — issue the writes, collect them in a
+  `MutationGroup`, wait once, because writes are applied concurrently;
+- a new page cannot be used as a `parentPageId` until its creation completes, at exactly
+  that moment and not before.
+
+### What the API cannot do
+
+Tables and columns are read-only; only rows are writable. Copying a doc with `sourceDoc` is
+the sanctioned route to a doc with tables in it. A conformance test fails if this changes.
 
 ## Tests
 
-Fully mocked with `responses` — no network, no token, safe to run anywhere.
+See `docs/source/testing.rst` for the full picture. In short: the default suite is fully
+mocked and offline, and two further suites are opt-in and never run by accident.
+
+The thing worth internalising is what the mocked suite **cannot** prove. It shows codaio
+calls the URL codaio *meant* to, which is self-consistency, not correctness — `list_folders`
+called `/docs/{docId}/folders`, an endpoint that has never existed, and every test passed.
+`pytest -m conformance` is the only check against something codaio did not write itself.
 
 - `tests/conftest.py::isolate_credentials` is **autouse**: it clears every credential env var
   and plants `None` in `sys.modules["keyring"]` so `import keyring` raises `ImportError`.
-  The default posture is "no keyring installed"; tests that want one opt in via the
-  `fake_keyring` fixture (parametrise it indirectly with a backend dotted name).
-- Reuse `mock_json_response` / `mock_json_responses` (they serve files from `tests/data/`)
-  and the `main_document` / `main_table` fixtures rather than introduce a second mocking
-  style.
-- `tests/__init__.py` puts the repo root on `sys.path`, so `codaio` need not be installed.
+  Integration-marked tests are exempt, since they exist to use real credentials.
+- Reuse `mock_json_response` / `mock_json_responses` (serving `tests/data/`) and the
+  `main_document` / `main_table` fixtures rather than introduce a second mocking style.
+- Nothing may actually sleep: anything that waits takes injectable `sleep`/`clock`, and the
+  `fake_clock` fixture supplies them.
+- Fixtures in `tests/data/` are realistic payloads and each carries one deliberately
+  unmodelled key, so tolerance is exercised by ordinary tests. Do not trim them back — they
+  were stripped once, and that is why a broken method survived for years.
+- Docstring examples run as tests. `>>>` is executed and must stay true; anything needing a
+  live client is a code block. `tests/test_docstrings.py` enforces the distinction and fails
+  on an undocumented public member.
 
 ## Conventions
 
