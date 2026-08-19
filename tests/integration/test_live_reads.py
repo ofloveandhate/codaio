@@ -55,6 +55,23 @@ class TestPages:
             "something that is not in the listing"
         )
 
+    def test_report_the_page_types_in_this_doc(self, live_doc):
+        """
+        Which content types a doc has is up to the doc. Reported rather than
+        required, so a doc with no embed or sync page is not a failure.
+        """
+        kinds = {}
+        for page in live_doc.list_pages():
+            kinds.setdefault(page.content_type, []).append(page.name)
+
+        print("\npage types in this doc:")
+        for kind, names in sorted(kinds.items()):
+            print(f"    {kind!r}: {len(names)} -- e.g. {names[0]!r}")
+
+        missing = {"canvas", "embed", "syncPage"} - set(kinds)
+        if missing:
+            print(f"    (not exercised live: {sorted(missing)})")
+
     def test_page_content_reads(self, live_doc):
         for page in live_doc.list_pages():
             if not page.is_canvas:
@@ -64,6 +81,79 @@ class TestPages:
                 assert line.id, "a content line with no id cannot be edited later"
             return
         pytest.skip("no canvas pages in the test doc")
+
+
+class TestColumnTypes:
+    """
+    What the doc's columns actually report, which is the thing you cannot learn
+    from the spec: it says a column has a `format.type`, not which of the
+    twenty-four names any given editor choice produces.
+    """
+
+    def test_report_every_column_type_and_the_shape_of_its_values(self, a_table):
+        from codaio.values import CodaValue
+
+        rows = list(a_table.iter_rows(value_format="rich", limit=25))
+        print(f"\ncolumn types in {a_table.name!r}:")
+
+        for column in a_table.columns():
+            sample = None
+            for row in rows:
+                value = dict(row.values).get(column.id)
+                if value not in (None, "", []):
+                    sample = value
+                    break
+
+            parsed = None
+            if sample is not None:
+                from codaio.values import parse_value
+
+                parsed = parse_value(sample)
+                if isinstance(parsed, list) and parsed:
+                    parsed = parsed[0]
+
+            shape = type(parsed).__name__ if parsed is not None else "-"
+            calculated = " (calculated)" if column.calculated else ""
+            print(f"    {column.name!r:32} format.type={column.format.type!r:20} "
+                  f"value={shape}{calculated}")
+
+            if isinstance(parsed, CodaValue):
+                assert parsed.to_json() == (
+                    sample[0] if isinstance(sample, list) else sample
+                ), f"{column.name} did not round-trip"
+
+    def test_an_attachment_column_yields_something_fetchable(self, a_table):
+        """
+        Whatever the editor calls the column, the values should carry a url.
+
+        The spec has `attachments`, `image` and `imageReference` among its column
+        types but only one image-ish value type, so what a File column produces
+        is worth establishing rather than assuming.
+        """
+        from codaio.values import ImageValue
+
+        found = []
+        for row in a_table.iter_rows(value_format="rich", limit=25):
+            for cell in row.cells():
+                values = cell.value if isinstance(cell.value, list) else [cell.value]
+                for value in values:
+                    if isinstance(value, ImageValue):
+                        found.append((cell.name, cell.column.format.type, value))
+
+        if not found:
+            pytest.skip(
+                "no attachment or image values in the first 25 rows; add a File "
+                "column with something in it to exercise the fetch path"
+            )
+
+        name, format_type, image = found[0]
+        print(f"\n  column {name!r} has format.type={format_type!r}")
+        print(f"  value: name={image.name!r} status={image.status!r}")
+        assert image.url, "an attachment with no url cannot be fetched"
+
+        payload = image.read()
+        print(f"  fetched {len(payload)} bytes with no credentials attached")
+        assert payload
 
 
 class TestTables:
@@ -110,33 +200,74 @@ class TestTables:
 
 
 class TestLosslessness:
-    def test_simple_format_is_lossy_and_simpleWithArrays_is_not(self, a_table):
+    def test_the_simple_format_loses_multi_valued_cells(self, a_table):
         """
-        The reason `Table.to_dict` no longer uses the API's default.
+        Why `Table.to_dict` no longer uses the API's default.
 
-        Under `simple` an array value is joined into a comma-delimited string.
-        This looks for a cell where that actually loses information.
+        Under `simple`, an array value is joined into one comma-delimited string.
+        That is not merely untidy, it is ambiguous: ["a", "b"] and ["a, b"] both
+        render as "a, b", so the original cannot be recovered. Options with
+        leading or trailing spaces make it worse, because splitting on ", "
+        rather than "," is equally wrong.
         """
-        plain = {r.id: dict(r.values) for r in a_table.rows(value_format="simple",
-                                                            limit=25)}
-        arrays = {r.id: dict(r.values) for r in a_table.rows(
-            value_format="simpleWithArrays", limit=25)}
+        plain = {r.id: dict(r.values)
+                 for r in a_table.rows(value_format="simple", limit=50)}
+        arrays = {r.id: dict(r.values)
+                  for r in a_table.rows(value_format="simpleWithArrays", limit=50)}
 
-        lossy = [
-            (row_id, column)
+        multi = [
+            (row_id, column, value)
             for row_id, values in arrays.items()
             for column, value in values.items()
             if isinstance(value, list) and len(value) > 1
         ]
-        if not lossy:
+        if not multi:
             pytest.skip(
-                "no multi-valued cells in the first 25 rows; add a multiselect "
-                "with several options selected to exercise this"
+                "no multi-valued cells in the first 50 rows; a multiselect with "
+                "several options selected exercises this"
             )
-        row_id, column = lossy[0]
-        assert isinstance(plain[row_id][column], str)
-        print(f"\nsimple:           {plain[row_id][column]!r}")
-        print(f"simpleWithArrays: {arrays[row_id][column]!r}")
+
+        row_id, column, real = multi[0]
+        joined = plain[row_id][column]
+        print(f"\n  simpleWithArrays: {real!r}")
+        print(f"  simple:           {joined!r}")
+
+        assert isinstance(joined, str), "simple should have flattened this"
+
+        # The interesting part: can the original be recovered from the string?
+        recovered = joined.split(",")
+        faithful = recovered == [str(v) for v in real]
+        print(f"  splitting on ',' recovers the original: {faithful}")
+        if not faithful:
+            print("  -- so reading with `simple` is lossy for this cell")
+
+    def test_values_with_commas_or_padding_cannot_survive_the_simple_format(
+        self, a_table
+    ):
+        """
+        The sharpest version: a value that itself contains a comma, or one padded
+        with spaces, is indistinguishable from a separator once joined.
+        """
+        suspicious = []
+        for row in a_table.iter_rows(value_format="simpleWithArrays", limit=50):
+            for column, value in row.values:
+                if not isinstance(value, list):
+                    continue
+                for item in value:
+                    if isinstance(item, str) and (
+                        "," in item or item != item.strip()
+                    ):
+                        suspicious.append((row.id, column, value, item))
+
+        if not suspicious:
+            pytest.skip(
+                "no array values containing a comma or padded with spaces; those "
+                "are the cases `simple` cannot represent at all"
+            )
+
+        row_id, column, whole, offender = suspicious[0]
+        print(f"\n  a value that breaks the simple format: {offender!r}")
+        print(f"  the whole cell:  {whole!r}")
 
 
 class TestTolerance:
