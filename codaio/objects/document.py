@@ -250,7 +250,17 @@ class Document:
         :param name: the page's title.
 
         :param parent_page: a `Page`, a page reference, or a page id to nest
-            this page under.
+            this page under. **It has to exist already.** The 202 for a page
+            creation hands back the new page's id immediately, but that id is not
+            usable as a parent until the creation has actually been applied --
+            measured at around 46 seconds, and usable at exactly the moment
+            `mutationStatus` reports it completed, not before. Referencing it
+            sooner is refused with `400 Invalid parentPageId: could not find a
+            page with id ...`, consistently rather than intermittently.
+
+            So building a page tree is inherently sequential: wait for each level
+            before creating the next. Pages *within* a level can be created
+            together and waited on once.
 
         :param content: a markdown string, or one of `CanvasContent`,
             `EmbedContent`, `SyncPageContent`.
@@ -267,6 +277,16 @@ class Document:
 
             handbook = doc.get_page("canvas-IjkLmnO")
             doc.create_page("Onboarding", parent_page=handbook).wait()
+
+        A whole level at once, which costs one write's latency rather than one
+        per page:
+
+        .. code-block:: python
+
+            writes = MutationGroup()
+            for title in ("Onboarding", "Benefits", "Kit"):
+                writes.add(doc.create_page(title, parent_page=handbook))
+            writes.wait()
         """
         data = {}
         for key, value in (

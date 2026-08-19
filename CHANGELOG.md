@@ -90,6 +90,15 @@ Pages, robust writes, and an object model that survives the API changing.
 
 ### Notes
 
+- **A new page cannot be used as a parent until its creation has been applied.**
+  The 202 hands back the id immediately, but referencing it sooner is refused
+  with `400 Invalid parentPageId`. Measured: it becomes usable at exactly the
+  moment `mutationStatus` reports the creation complete, around 46 seconds, with
+  no earlier window. Building a page tree is therefore sequential per level,
+  though pages within a level can be created together and waited on once.
+- **Writes take roughly a minute to be applied**, despite the API documenting
+  "several seconds" -- around 41 for a row update and 60 for a page creation.
+  This is why nothing waits by default.
 - **Tables and columns cannot be created through this API**, only read. Copying
   a doc with `sourceDoc` is the sanctioned way to get a doc with tables in it.
   A conformance test fails if that ever changes.

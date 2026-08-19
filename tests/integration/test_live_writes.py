@@ -14,8 +14,11 @@ and the tests only assert:
     tests    read things back and check them          -> no waiting
 
 Writes are applied concurrently, so a batch costs about as long as its slowest
-member rather than the sum. Two phases rather than one because you cannot append
-to a page that does not exist yet.
+member rather than the sum. Two phases rather than one because the second lot
+depends on the first having been applied -- and that is a real constraint, not a
+guess: a page id is not usable as a `parentPageId` until its creation completes,
+measured at the same moment `mutationStatus` says so and not a second earlier.
+`TestParentsMustExistFirst` pins that.
 
 Nothing is cleaned up. The test doc is disposable by hand -- duplicate it when it
 gets cluttered -- which is why every assertion here is on an object this run
@@ -260,6 +263,46 @@ class TestRowWrites:
     def test_an_unknown_column_raises_rather_than_reaching_the_api(self, a_table):
         with pytest.raises(err.ColumnNotFound):
             a_table.upsert_row([Cell("No Such Column", "x")])
+
+
+class TestParentsMustExistFirst:
+    """
+    A created page cannot be a parent until its creation has been applied.
+
+    Worth pinning, because the id is handed back in the 202 immediately and looks
+    perfectly usable. Measured: the page becomes usable as a parent at exactly
+    the moment `mutationStatus` reports the creation complete -- about 46 seconds
+    -- with no earlier window to exploit.
+
+    Costs nothing to run: both writes are accepted or rejected immediately, and
+    neither is waited on.
+    """
+
+    def test_a_queued_page_is_refused_as_a_parent(self, live_doc, run_stamp):
+        parent = live_doc.create_page(f"codaio {run_stamp}: unapplied parent")
+
+        assert parent.id, "the 202 hands back an id straight away"
+        assert not parent.completed
+
+        with pytest.raises(err.BadRequest, match="parentPageId"):
+            live_doc.create_page(
+                f"codaio {run_stamp}: doomed child", parent_page=parent.id
+            )
+
+    def test_the_failure_is_loud_rather_than_silent(self, live_doc, run_stamp):
+        """
+        The important part. A page quietly created at the top level instead of
+        where it was asked for would be far worse than an error.
+        """
+        parent = live_doc.create_page(f"codaio {run_stamp}: unapplied parent 2")
+
+        with pytest.raises(err.BadRequest) as caught:
+            live_doc.create_page(
+                f"codaio {run_stamp}: doomed child 2", parent_page=parent.id
+            )
+
+        assert caught.value.status_code == 400
+        assert parent.id in str(caught.value)
 
 
 class TestHowSlowWritesAre:
