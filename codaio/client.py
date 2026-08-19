@@ -41,6 +41,25 @@ credentials.maybe_load_dotenv()
 MAX_GET_LIMIT = 200
 
 
+def _refuse_doc_scoped_folder_call(positional, doc_id) -> None:
+    """
+    Stop an old doc-scoped folder call being silently reinterpreted.
+
+    These methods used to take a doc id first. Folders are a workspace-level
+    concept, so the same call now means something different, and the difference
+    is invisible: `list_folders("AbCDeFGH")` would quietly ask about a workspace
+    with a doc's id and get an empty or confusing answer rather than an error.
+    """
+    if positional or doc_id is not None:
+        raise TypeError(
+            "folders belong to a workspace, not to a doc: there is no "
+            "/docs/{docId}/folders endpoint and there never was, so the previous "
+            "signature could only ever 404. Pass workspace_id= to list folders in "
+            "a workspace, or a folder id to fetch one. `Document.folder` gives "
+            "the folder a doc lives in."
+        )
+
+
 @attr.s(eq=True, hash=False)
 class Coda:
     """
@@ -370,7 +389,10 @@ class Coda:
         query: str = None,
         source_doc_id: str = None,
         limit: int = None,
-        offset: int = None,
+        offset: str = None,
+        *,
+        workspace_id: str = None,
+        folder_id: str = None,
     ) -> Dict:
         """
         Returns a list of Coda documents accessible by the user.
@@ -390,14 +412,23 @@ class Coda:
 
         :param offset: An opaque token used to fetch the next page of results.
 
+        :param workspace_id: show only docs in this workspace.
+
+        :param folder_id: show only docs in this folder.
+
         :return:
+
+        .. code-block:: python
+
+            for item in coda.list_docs(folder_id="fl-1Ab234")["items"]:
+                print(item["name"])
         """
-        return self.get(
-            "/docs",
-            data={"isOwner": is_owner, "query": query, "sourceDoc": source_doc_id},
-            limit=limit,
-            offset=offset,
-        )
+        data = {"isOwner": is_owner, "query": query, "sourceDoc": source_doc_id}
+        if workspace_id is not None:
+            data["workspaceId"] = workspace_id
+        if folder_id is not None:
+            data["folderId"] = folder_id
+        return self.get("/docs", data=data, limit=limit, offset=offset)
 
     def create_doc(self, title: str, source_doc: str = None, tz: str = None) -> Dict:
         """
@@ -700,38 +731,122 @@ class Coda:
         )
         return self.get_page(doc_id, section_id_or_name)
 
-    def list_folders(self, doc_id: str, offset: int = None, limit: int = None) -> Dict:
+    # ----------------------------------------------------------------------
+    # Folders
+    #
+    # Folders live in a workspace, not in a doc. The methods here used to build
+    # `/docs/{docId}/folders`, which is not an endpoint the API has ever had, so
+    # both could only ever 404.
+    # ----------------------------------------------------------------------
+
+    def list_folders(
+        self,
+        *positional,
+        workspace_id: str = None,
+        is_starred: bool = None,
+        limit: int = None,
+        offset: str = None,
+        doc_id: str = None,
+    ) -> Dict:
         """
-        Returns a list of folders in a Coda doc.
+        Returns folders in a workspace.
 
-        Docs: https://coda.io/developers/apis/v1/#operation/listFolders
+        :param workspace_id: restrict to one workspace. Omit for every folder
+            the token can see. `GET /whoami` reports the workspace you are in --
+            see :meth:`account`.
 
-        :param doc_id: ID of the doc. Example: "AbCDeFGH"
+        :param is_starred: restrict to starred folders.
 
         :param limit: Maximum number of results to return in this query.
 
         :param offset: An opaque token used to fetch the next page of results.
 
-        :return:
-        """
-        return self.get(f"/docs/{doc_id}/folders", offset=offset, limit=limit)
+        .. code-block:: python
 
-    def get_folder(self, doc_id: str, folder_id_or_name: str) -> Dict:
+            workspace = coda.account()["workspace"]["id"]
+            for folder in coda.list_folders(workspace_id=workspace)["items"]:
+                print(folder["name"])
+        """
+        _refuse_doc_scoped_folder_call(positional, doc_id)
+
+        data = {}
+        if workspace_id is not None:
+            data["workspaceId"] = workspace_id
+        if is_starred is not None:
+            data["isStarred"] = is_starred
+        return self.get("/folders", data=data or None, offset=offset, limit=limit)
+
+    def get_folder(self, folder_id: str = None, *positional, doc_id: str = None) -> Dict:
         """
         Returns details about a folder.
 
-        Docs: https://coda.io/developers/apis/v1/#operation/getFolder
+        :param folder_id: ID of the folder. Example: "fl-1Ab234"
 
-        :param doc_id: ID of the doc. Example: "AbCDeFGH"
+        .. code-block:: python
 
-        :param folder_id_or_name: ID or name of the folder.
-            Names are discouraged because they're easily prone to being
-            changed by users. If you're using a name, be sure to URI-encode it.
-            Example: "section-IjkLmnO"
-
-        :return:
+            folder = coda.get_folder("fl-1Ab234")
         """
-        return self.get(f"/docs/{doc_id}/folders/{folder_id_or_name}")
+        _refuse_doc_scoped_folder_call(positional, doc_id)
+        return self.get(f"/folders/{folder_id}")
+
+    def create_folder(
+        self, name: str, workspace_id: str, *, description: str = None
+    ) -> Dict:
+        """
+        Creates a folder in a workspace.
+
+        :param name: what to call it.
+
+        :param workspace_id: the workspace to create it in. Required by the API:
+            a folder has to live somewhere.
+
+        :param description: optional description.
+
+        .. code-block:: python
+
+            coda.create_folder("Research", workspace_id="ws-abc")
+        """
+        data = {"name": name, "workspaceId": workspace_id}
+        if description is not None:
+            data["description"] = description
+        return self.post(
+            "/folders", data, idempotency=ENDPOINTS["create_folder"].idempotency
+        )
+
+    def update_folder(
+        self, folder_id: str, *, name: str = None, description: str = None
+    ) -> Dict:
+        """
+        Renames a folder or changes its description.
+
+        :param folder_id: ID of the folder. Example: "fl-1Ab234"
+
+        .. code-block:: python
+
+            coda.update_folder("fl-1Ab234", name="Archived research")
+        """
+        data = {}
+        if name is not None:
+            data["name"] = name
+        if description is not None:
+            data["description"] = description
+        if not data:
+            raise err.InvalidQuery("update_folder was given nothing to change")
+        return self.patch(
+            f"/folders/{folder_id}", data,
+            idempotency=ENDPOINTS["update_folder"].idempotency,
+        )
+
+    def delete_folder(self, folder_id: str) -> Dict:
+        """
+        Deletes a folder.
+
+        :param folder_id: ID of the folder. Example: "fl-1Ab234"
+        """
+        return self.delete(
+            f"/folders/{folder_id}",
+            idempotency=ENDPOINTS["delete_folder"].idempotency,
+        )
 
     def list_tables(self, doc_id: str, offset: int = None, limit: int = None, data: Dict = None) -> Dict:
         """

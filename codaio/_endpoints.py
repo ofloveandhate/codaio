@@ -172,7 +172,7 @@ ENDPOINTS: Dict[str, Endpoint] = {
     # -- Docs --------------------------------------------------------------
     "list_docs": Endpoint(
         "GET", "/docs",
-        params=("isOwner", "query", "sourceDoc") + _PAGING,
+        params=("isOwner", "query", "sourceDoc", "workspaceId", "folderId") + _PAGING,
     ),
     "create_doc": Endpoint(
         "POST", "/docs",
@@ -241,16 +241,23 @@ ENDPOINTS: Dict[str, Endpoint] = {
     ),
 
     # -- Folders -----------------------------------------------------------
-    # These two paths do not exist. Folders are a workspace-level concept
-    # (`/folders`, `/folders/{folderId}`), so both of these can only ever 404.
-    # Recorded as what the code does today rather than what it should do; the
-    # conformance check is what turns this from a comment into a failure.
+    # Workspace-level, not doc-level. The previous entries here described
+    # /docs/{docId}/folders, which is not an endpoint the API has.
     "list_folders": Endpoint(
-        "GET", "/docs/{docId}/folders", args=("doc_id",), params=_PAGING,
+        "GET", "/folders", params=("workspaceId", "isStarred") + _PAGING,
     ),
-    "get_folder": Endpoint(
-        "GET", "/docs/{docId}/folders/{folderIdOrName}",
-        args=("doc_id", "folder_id_or_name"),
+    "get_folder": Endpoint("GET", "/folders/{folderId}", args=("folder_id",)),
+    "create_folder": Endpoint(
+        "POST", "/folders",
+        idempotency=Idempotency.UNSAFE, success=(201,),
+    ),
+    "update_folder": Endpoint(
+        "PATCH", "/folders/{folderId}", args=("folder_id",),
+        idempotency=Idempotency.IDEMPOTENT,
+    ),
+    "delete_folder": Endpoint(
+        "DELETE", "/folders/{folderId}", args=("folder_id",),
+        idempotency=Idempotency.IDEMPOTENT,
     ),
 
     # -- Tables and views --------------------------------------------------

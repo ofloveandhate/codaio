@@ -6,14 +6,14 @@ from __future__ import annotations
 
 import datetime as dt
 import warnings
-from typing import Dict, Iterator, List
+from typing import Dict, Iterator, List, Optional
 
 import attr
 from dateutil.parser import parse
 
 from codaio import err
 from codaio.client import Coda
-from codaio.objects.base import CodaObject
+from codaio.objects.base import CodaObject, Reference, WorkspaceReference, ref
 from codaio.objects.mutation import Mutation
 from codaio.objects.page import Page, PageTree, _content_payload
 from codaio.objects.table import Table
@@ -31,7 +31,13 @@ class Document:
     created_at: dt.datetime = attr.ib(init=False, repr=False)
     updated_at: dt.datetime = attr.ib(init=False, repr=False)
     browser_link: str = attr.ib(init=False)
+    folder: "Reference" = attr.ib(init=False, repr=False, default=None)
+    workspace: "Reference" = attr.ib(init=False, repr=False, default=None)
+    #: The payload this was built from, exactly as received.
+    raw: Dict = attr.ib(init=False, repr=False, factory=dict)
     coda: Coda = attr.ib(repr=False)
+    # A payload already in hand, so `from_json` can skip the fetch.
+    _prefetched: Dict = attr.ib(default=None, repr=False, kw_only=True)
 
     def __eq__(self, other):
         """Same id, same doc -- see `CodaObject.__eq__` for why identity, not content."""
@@ -108,15 +114,64 @@ class Document:
 
     def __attrs_post_init__(self):
         self.href = f"/docs/{self.id}"
+        if self._prefetched is not None:
+            self._absorb(self._prefetched)
+            return
         data = self.coda.get(self.href + "/")
         if not data:
             raise err.DocumentNotFound(f"No document with id {self.id}")
-        self.name = data["name"]
-        self.owner = data["owner"]
-        self.created_at = parse(data["createdAt"])
-        self.updated_at = parse(data["updatedAt"])
-        self.type = data["type"]
-        self.browser_link = data["browserLink"]
+        self._absorb(data)
+
+    def _absorb(self, data: Dict) -> None:
+        self.raw = dict(data)
+        self.name = data.get("name")
+        self.owner = data.get("owner")
+        self.created_at = parse(data["createdAt"]) if data.get("createdAt") else None
+        self.updated_at = parse(data["updatedAt"]) if data.get("updatedAt") else None
+        self.type = data.get("type")
+        self.browser_link = data.get("browserLink")
+        self.folder = ref(data.get("folder"))
+        self.workspace = ref(data.get("workspace"))
+
+    @classmethod
+    def from_json(cls, js: Dict, *, coda: Coda) -> "Document":
+        """
+        Build a document from a payload already in hand, with no request.
+
+        Listing docs returns them in full, so constructing each one by fetching
+        it again would be a request per doc for information already received.
+
+        .. code-block:: python
+
+            docs = [Document.from_json(item, coda=coda)
+                    for item in coda.list_docs()["items"]]
+        """
+        return cls(id=js["id"], coda=coda, prefetched=js)
+
+    @property
+    def folder_id(self) -> Optional[str]:
+        """The id of the folder this doc lives in, if the payload named one."""
+        return self.folder.id if self.folder else None
+
+    @property
+    def workspace_id(self) -> Optional[str]:
+        """The id of the workspace this doc lives in, if the payload named one."""
+        return self.workspace.id if self.workspace else None
+
+    def get_folder(self) -> "Folder":
+        """
+        Fetch the folder this doc lives in.
+
+        .. code-block:: python
+
+            print(doc.get_folder().name)
+        """
+        if not self.folder_id:
+            raise err.FolderNotFound(
+                f"doc {self.id!r} did not come with a folder; it may have been "
+                f"built from a payload that omitted one."
+            )
+        return Folder.from_json(self.coda.get_folder(self.folder_id), coda=self.coda)
 
     def list_pages(self, offset: str = None, limit: int = None) -> List[Page]:
         """
@@ -267,11 +322,89 @@ class Document:
 @attr.s(auto_attribs=True, eq=False, repr=False)
 class Folder(CodaObject):
     """
-    A folder.
+    A folder in a workspace.
 
-    Note it has no `href`, which is why the base makes that field optional --
-    every other object the API returns carries one.
+    Folders sit above docs rather than inside them, which is why they are
+    reached through the client or a document rather than listed off a doc.
+
+    Note it has no `href`, unlike every other object the API returns -- which is
+    why the base class makes that field optional.
+
+    .. code-block:: python
+
+        folder = doc.folder.resolve(coda)
+        for sibling in folder.docs():
+            print(sibling.name)
     """
 
     name: str = None
     browser_link: str = attr.ib(default=None, repr=False)
+    description: str = attr.ib(default=None, repr=False)
+    icon: Dict = attr.ib(default=None, repr=False)
+    can_edit: bool = attr.ib(default=None, repr=False)
+    created_at: dt.datetime = attr.ib(
+        default=None, converter=lambda x: parse(x) if x else None, repr=False
+    )
+    workspace: WorkspaceReference = attr.ib(default=None, converter=ref, repr=False)
+    #: The client this folder was fetched with, so it can fetch more.
+    coda: "Coda" = attr.ib(default=None, repr=False, kw_only=True)
+
+    @classmethod
+    def from_json(cls, js: Dict, *, coda: "Coda" = None, **extra) -> "Folder":
+        """
+        Build a folder from an API payload.
+
+        >>> folder = Folder.from_json({
+        ...     "id": "fl-1Ab234", "type": "folder", "name": "Research",
+        ...     "workspace": {"id": "ws-abc", "type": "workspace"},
+        ... })
+        >>> folder.name, folder.workspace.id
+        ('Research', 'ws-abc')
+        """
+        return super().from_json(js, coda=coda, **extra)
+
+    @property
+    def workspace_id(self) -> Optional[str]:
+        """
+        The id of the workspace this folder belongs to.
+
+        >>> Folder.from_json({
+        ...     "id": "fl-1", "type": "folder",
+        ...     "workspace": {"id": "ws-abc", "type": "workspace"},
+        ... }).workspace_id
+        'ws-abc'
+        """
+        return self.workspace.id if self.workspace else None
+
+    def docs(self, **kwargs) -> List["Document"]:
+        """
+        The docs in this folder.
+
+        .. code-block:: python
+
+            for doc in folder.docs():
+                print(doc.name)
+        """
+        listing = self.coda.list_docs(folder_id=self.id, **kwargs)
+        return [
+            Document.from_json(item, coda=self.coda) for item in listing["items"]
+        ]
+
+    def rename(self, name: str = None, *, description: str = None) -> "Folder":
+        """
+        Rename this folder or change its description, and return it refreshed.
+
+        .. code-block:: python
+
+            folder.rename("Archived research")
+        """
+        self.coda.update_folder(self.id, name=name, description=description)
+        return self.refresh()
+
+    def delete(self) -> Dict:
+        """Delete this folder."""
+        return self.coda.delete_folder(self.id)
+
+    def refresh(self) -> "Folder":
+        """Re-read this folder from the API."""
+        return Folder.from_json(self.coda.get_folder(self.id), coda=self.coda)

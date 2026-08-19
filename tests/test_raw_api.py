@@ -31,8 +31,11 @@ CALLS = {
     "get_page_export": {
         "doc_id": "d1", "page_id_or_name": "canvas-p1", "request_id": "req-1",
     },
-    "list_folders": {"doc_id": "d1"},
-    "get_folder": {"doc_id": "d1", "folder_id_or_name": "f1"},
+    "list_folders": {"workspace_id": "ws-1"},
+    "get_folder": {"folder_id": "fl-1"},
+    "create_folder": {"name": "Research", "workspace_id": "ws-1"},
+    "update_folder": {"folder_id": "fl-1", "name": "Renamed"},
+    "delete_folder": {"folder_id": "fl-1"},
     "get_view": {"doc_id": "d1", "view_id_or_name": "v1"},
     "list_columns": {"doc_id": "d1", "table_id_or_name": "t1"},
     "get_column": {"doc_id": "d1", "table_id_or_name": "t1", "column_id_or_name": "c1"},
