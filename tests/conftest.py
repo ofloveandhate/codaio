@@ -6,6 +6,7 @@ import sys
 import responses
 import json
 from codaio import Coda, Document
+from codaio.http import RetryPolicy
 from codaio import credentials
 
 BASE_URL = "https://coda.io/apis/v1"
@@ -17,12 +18,11 @@ CREDENTIAL_ENV_VARS = (
     "CODA_API_ENDPOINT",
     "CODAIO_DOTENV",
     "CODAIO_ALLOW_INSECURE_KEYRING",
-    "USE_HTTPX",
 )
 
 
 @pytest.fixture(autouse=True)
-def isolate_credentials(monkeypatch):
+def isolate_credentials(monkeypatch, request):
     """
     Keep the suite away from real credentials.
 
@@ -31,7 +31,14 @@ def isolate_credentials(monkeypatch):
     ImportError, so the default posture is "no keyring installed" and
     reaching a real Secret Service is impossible rather than just unlikely.
     Tests that want a keyring opt in via the `fake_keyring` fixture.
+
+    The integration suite is the one exception: it exists to talk to a real doc
+    with a real token, so isolating it from both would leave it testing nothing.
+    It is opt-in and never runs by accident, which is what makes that safe.
     """
+    if request.node.get_closest_marker("integration"):
+        return
+
     for var in CREDENTIAL_ENV_VARS:
         monkeypatch.delenv(var, raising=False)
     for var in [v for v in os.environ if re.fullmatch(r"CODA_API_KEY_\w+", v)]:
@@ -81,9 +88,50 @@ def fake_keyring(request, monkeypatch):
 
 
 @pytest.fixture
+def fake_clock():
+    """
+    A clock and a sleep that only advance it, recording what was asked for.
+
+    Nothing in the suite may actually sleep, so anything that waits -- the retry
+    policy, mutation polling, export polling -- takes its `sleep` and `clock` as
+    arguments and gets these instead.
+    """
+
+    class Clock:
+        def __init__(self):
+            self.now = 0.0
+            self.sleeps = []
+
+        def __call__(self):
+            return self.now
+
+        def sleep(self, seconds):
+            self.sleeps.append(seconds)
+            self.now += seconds
+
+    return Clock()
+
+
+@pytest.fixture
 def coda():
+    """
+    A client that does not retry, so one call means one request.
+
+    Retrying is the default in real use, but a test that registers one response
+    and gets five requests is a test about the retry policy, not about whatever
+    it was trying to check. Use `retrying_coda` when the retrying *is* the point.
+    """
     API_KEY = "ANY_KEY"
-    return Coda(API_KEY)
+    return Coda(API_KEY, retry=None)
+
+
+@pytest.fixture
+def retrying_coda(fake_clock):
+    """A client that retries on the default schedule, without ever waiting."""
+    return Coda(
+        "ANY_KEY",
+        retry=RetryPolicy(jitter=False, sleep=fake_clock.sleep, clock=fake_clock),
+    )
 
 
 @pytest.fixture

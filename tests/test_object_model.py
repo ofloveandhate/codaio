@@ -89,21 +89,20 @@ class TestRowMutation:
         assert len(puts) == 1
         assert b"new value" in puts[0].request.body
 
-    def test_setitem_does_not_update_the_row_in_place(self, main_table):
+    def test_setitem_updates_the_row_in_place(self, main_table):
         """
-        Current behaviour, pinned rather than endorsed.
+        Assigning to a cell used to change nothing you could read back.
 
-        `__setitem__` assigns to `cell.value_storage`, but `Row.cells()`
-        builds fresh `Cell` objects out of `Row.values` on every call, so it
-        is mutating a throwaway. `Row.values` is untouched and a read-back
-        still shows the old value until `refresh()` is called.
+        `__setitem__` assigned to `cell.value_storage`, but `Row.cells()` builds
+        fresh `Cell` objects out of `Row.values` on every call -- so it was
+        mutating a throwaway, and a read-back still showed the old value until
+        `refresh()` was called. `Row.values` is updated now.
         """
         row = main_table.rows()[0]
-        before = row["column_id"].value
 
         row["column_id"] = "new value"
 
-        assert row["column_id"].value == before
+        assert row["column_id"].value == "new value"
 
     def test_setitem_on_unknown_column_raises(self, main_table):
         with pytest.raises((KeyError, err.ColumnNotFound)):
@@ -291,18 +290,47 @@ class TestRawOptionalParams:
 
         assert Document.from_environment("doc_id").coda.api_key == "tok"
 
-    def test_document_list_sections(self, main_document, mock_json_response):
-        from codaio.coda import Section
+    def test_document_list_pages(self, main_document, mock_json_response):
+        """
+        The payload this parses is the one the old object model could not build.
+
+        A real page carries subtitle, contentType, isHidden and children, and
+        every one of those raised TypeError -- so this call was broken against
+        any live doc while the suite stayed green on a hand-written fixture.
+        """
+        from codaio import Page
 
         mock_json_response(BASE_URL + "/docs/doc_id/pages", "get_sections.json")
-        sections = main_document.list_sections()
+        pages = main_document.list_pages()
 
-        assert sections
-        assert all(isinstance(s, Section) for s in sections)
+        assert pages
+        assert all(isinstance(p, Page) for p in pages)
+        assert pages[0].subtitle == "The first page"
+        assert pages[0].content_type == "canvas"
+        assert [c.id for c in pages[0].children] == ["section_id-1"]
+
+    def test_list_sections_still_works_and_says_it_is_the_old_name(
+        self, main_document, mock_json_response
+    ):
+        from codaio import Page
+
+        mock_json_response(BASE_URL + "/docs/doc_id/pages", "get_sections.json")
+
+        with pytest.deprecated_call(match="list_pages"):
+            pages = main_document.list_sections()
+
+        assert all(isinstance(p, Page) for p in pages)
 
 
 class TestFindRowByColumnName:
+    """
+    The column name is resolved before it is used in a query, which costs one
+    columns fetch the first time. Without it a name that matches nothing returns
+    an empty list, indistinguishable from a query that legitimately found nothing.
+    """
+
     def test_returns_matching_rows(self, main_table, mock_json_response):
+        mock_json_response(TABLE_URL + "columns", "get_columns.json")
         mock_json_response(
             TABLE_URL + 'rows?useColumnNames=False&query=%22Alpha%22%3A%22value-Alpha%22',
             "get_row_by_query.json",
@@ -315,8 +343,18 @@ class TestFindRowByColumnName:
     def test_returns_empty_list_when_nothing_matches(
         self, main_table, mock_json_response
     ):
+        mock_json_response(TABLE_URL + "columns", "get_columns.json")
         mock_json_response(
             TABLE_URL + 'rows?useColumnNames=False&query=%22Alpha%22%3A%22nope%22',
             "empty.json",
         )
         assert main_table.find_row_by_column_name_and_value("Alpha", "nope") == []
+
+    def test_a_column_name_that_does_not_exist_raises(
+        self, main_table, mock_json_response
+    ):
+        """Rather than querying for it and returning an empty list."""
+        mock_json_response(TABLE_URL + "columns", "get_columns.json")
+
+        with pytest.raises(err.ColumnNotFound, match="Nonexistent"):
+            main_table.find_row_by_column_name_and_value("Nonexistent", "x")

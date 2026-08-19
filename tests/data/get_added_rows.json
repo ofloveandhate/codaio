@@ -14,6 +14,10 @@
         "column_id-1": "value-1-Beta",
         "column_id-2": "value-1-Omega",
         "column_id-3": "value-1-Gamma"
+      },
+      "someFutureField": {
+        "added": "by the API",
+        "after": "codaio was written"
       }
     },
     {
@@ -30,6 +34,10 @@
         "column_id-1": "value-2-Beta",
         "column_id-2": "value-2-Omega",
         "column_id-3": "value-2-Gamma"
+      },
+      "someFutureField": {
+        "added": "by the API",
+        "after": "codaio was written"
       }
     },
     {
@@ -46,6 +54,10 @@
         "column_id-1": "value-3-Beta",
         "column_id-2": "value-3-Omega",
         "column_id-3": "value-3-Gamma"
+      },
+      "someFutureField": {
+        "added": "by the API",
+        "after": "codaio was written"
       }
     },
     {
@@ -62,6 +74,10 @@
         "column_id-1": "value-4-Beta",
         "column_id-2": "value-4-Omega",
         "column_id-3": "value-4-Gamma"
+      },
+      "someFutureField": {
+        "added": "by the API",
+        "after": "codaio was written"
       }
     },
     {
@@ -78,6 +94,10 @@
         "column_id-1": "value-5-Beta",
         "column_id-2": "value-5-Omega",
         "column_id-3": "value-5-Gamma"
+      },
+      "someFutureField": {
+        "added": "by the API",
+        "after": "codaio was written"
       }
     }
   ],

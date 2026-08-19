@@ -13,5 +13,36 @@
     "tableAndViewCount": 1,
     "pageCount": 1,
     "overApiSizeLimit": false
+  },
+  "workspace": {
+    "id": "ws-abc",
+    "type": "workspace",
+    "organizationId": "org-1",
+    "browserLink": "https://coda.io/workspaces/ws-abc",
+    "name": "Test Workspace"
+  },
+  "workspaceId": "ws-abc",
+  "folder": {
+    "id": "fl-abc",
+    "type": "folder",
+    "name": "Test Folder",
+    "browserLink": "https://coda.io/docs?folderId=fl-abc"
+  },
+  "folderId": "fl-abc",
+  "icon": {
+    "name": "notebook",
+    "type": "icon",
+    "browserLink": "https://coda.io/notebook.png"
+  },
+  "published": {
+    "browserLink": "https://coda.io/p/pub",
+    "discoverable": false,
+    "earnCredit": false,
+    "mode": "view",
+    "categories": []
+  },
+  "someFutureField": {
+    "added": "by the API",
+    "after": "codaio was written"
   }
 }

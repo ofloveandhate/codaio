@@ -1,18 +1,71 @@
 {
-    "items": [
+  "items": [
+    {
+      "id": "section_id",
+      "type": "page",
+      "href": "https://coda.io/apis/v1/docs/doc_id/pages/section_id",
+      "name": "Main Page",
+      "subtitle": "The first page",
+      "browserLink": "https://coda.io/d/_ddoc_id/Main-Page_susection_id",
+      "icon": {
+        "name": "rocket",
+        "type": "icon",
+        "browserLink": "https://coda.io/rocket.png"
+      },
+      "image": {
+        "type": "image",
+        "browserLink": "https://coda.io/cover.png",
+        "width": 800,
+        "height": 600
+      },
+      "contentType": "canvas",
+      "isHidden": false,
+      "isEffectivelyHidden": false,
+      "children": [
         {
-            "id": "section_id",
-            "type": "page",
-            "href": "https://coda.io/apis/v1/docs/doc_id/pages/section_id",
-            "name": "Main Page",
-            "browserLink": "https://coda.io/d/_ddoc_id/Main-Page_susection_id"
-        },
-        {
-            "id": "section_id-1",
-            "type": "page",
-            "href": "https://coda.io/apis/v1/docs/doc_id/pages/section_id-1",
-            "name": "Second Page",
-            "browserLink": "https://coda.io/d/_ddoc_id/Second-Page_susection_id-1"
+          "id": "section_id-1",
+          "type": "page",
+          "href": "https://coda.io/apis/v1/docs/doc_id/pages/section_id-1",
+          "browserLink": "https://coda.io/d/_ddoc_id/Second-Page_susection_id-1",
+          "name": "Second Page"
         }
-    ]
+      ],
+      "authors": [
+        {
+          "name": "Foo Bar",
+          "email": "foobar@example.com"
+        }
+      ],
+      "createdAt": "2020-01-01T00:00:00.000Z",
+      "updatedAt": "2020-01-02T00:00:00.000Z",
+      "someFutureField": {
+        "added": "by the API",
+        "after": "codaio was written"
+      }
+    },
+    {
+      "id": "section_id-1",
+      "type": "page",
+      "href": "https://coda.io/apis/v1/docs/doc_id/pages/section_id-1",
+      "name": "Second Page",
+      "browserLink": "https://coda.io/d/_ddoc_id/Second-Page_susection_id-1",
+      "contentType": "canvas",
+      "isHidden": false,
+      "isEffectivelyHidden": false,
+      "parent": {
+        "id": "section_id",
+        "type": "page",
+        "href": "https://coda.io/apis/v1/docs/doc_id/pages/section_id",
+        "browserLink": "https://coda.io/d/_ddoc_id/Main-Page_susection_id",
+        "name": "Main Page"
+      },
+      "children": [],
+      "createdAt": "2020-01-01T00:00:00.000Z",
+      "updatedAt": "2020-01-02T00:00:00.000Z",
+      "someFutureField": {
+        "added": "by the API",
+        "after": "codaio was written"
+      }
+    }
+  ]
 }

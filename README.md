@@ -63,6 +63,41 @@ doc.list_tables()
 
 table = doc.get_table('TABLE_ID')
 ```
+#### Pages
+
+```python
+for page, depth in doc.page_tree().walk():
+    print('  ' * depth + page.name)
+```
+
+The listing is flat but each page carries its parent and its children, so the
+whole hierarchy costs one request.
+
+Markdown and HTML come from an export, which is the only route to them -- the
+synchronous content read speaks plain text only:
+
+```python
+markdown = page.export_text('markdown')
+```
+
+Exporting many pages wants the two-step form. Starting an export is a write
+against the tightest rate-limit bucket, five per ten seconds, so start them and
+collect them rather than blocking on each:
+
+```python
+exports = [page.begin_export('markdown') for page in doc.list_pages()]
+for export in exports:
+    Path(f'{export.page.id}.md').write_text(export.wait().text())
+```
+
+Pages can be created and edited, but **tables and columns cannot** -- the API
+only reads those. Copying a doc is the sanctioned way to get one with tables in
+it:
+
+```python
+coda.create_doc('This week', source_doc='AbCDeFGH')
+```
+
 #### Fetching a Row
 ```python
 # You can fetch a row by ID
@@ -76,6 +111,15 @@ import pandas as pd
 
 df = pd.DataFrame(table.to_dict())
 ```
+
+A row omits any column it has no value for rather than inventing one, so
+`DataFrame` fills those with `NaN` while a cell the API returned as empty keeps
+its empty value. That distinction is worth having: `None` for both would lose it.
+
+`to_dict()` reads with `valueFormat="simpleWithArrays"`, not the API's `simple`
+default, because `simple` joins multi-valued cells into one comma-delimited
+string -- so `["a", "b"]` and `["a, b"]` come back identical and neither can be
+recovered.
 
 #### Fetching a Cell
 ```python
@@ -97,6 +141,46 @@ row['COLUMN_ID'] = 'foo'
 # or
 row['Column Name'] = 'foo'
 ```
+
+Writes are **accepted, not applied**. Coda answers every edit with a request id
+and gets to it later -- measured at around 40 seconds for a row update, despite
+the API documenting "several seconds". So nothing waits by default:
+
+```python
+write = row['Cost'].set('12.34')     # returns straight away
+write.wait()                         # ~40s, when you need it to have landed
+```
+
+For more than one edit, issue them all and wait once. Writes are applied
+concurrently, so this costs about as long as the slowest rather than their sum:
+
+```python
+from codaio import MutationGroup
+
+writes = MutationGroup()
+for row in table.iter_rows():
+    writes.add(row['Done'].set(True))
+writes.wait()
+```
+
+Note that Coda coerces values to the column's format -- `"$12.34"` is stored as
+`12.34`, dates are reformatted, select options normalised -- so what it keeps is
+not always what you sent. `row.refresh()` shows the truth.
+
+#### Cell values
+
+By default the API flattens every cell to a string. Reading with `rich` gives
+structured values instead:
+
+```python
+for row in table.iter_rows(value_format='rich'):
+    for image in row['Attachments'].value:
+        destination.write_bytes(image.read())     # no credentials sent
+```
+
+Images, people, links, currency and relations come back as classes with named
+attributes; anything codaio does not recognise is kept rather than refused.
+Currency is a `Decimal`, not a float.
 
 #### Iterating over rows
 ```python
@@ -290,6 +374,44 @@ python -m pytest --cov=codaio --cov-report=term-missing
 
 CI runs exactly these steps against python 3.10 through 3.13, plus a `flake8`
 gate for syntax errors and undefined names.
+
+Docstring examples are run as tests too. A `>>>` example is checked and fails
+the build when it stops being true; anything needing a live client is written as
+a code block instead, so it is always clear which examples are verified.
+
+#### Two suites that are not run by default
+
+The docs have a fuller page on all of this — what each suite proves, what it
+cannot, and how to set up a doc and a scoped token for the live one. Build them
+with `cd docs && make html`.
+
+Neither is in CI, and neither runs unless asked for.
+
+```shell script
+python -m pytest -m conformance
+```
+
+compares codaio to the OpenAPI document Coda publishes: that every path it calls
+exists, every parameter it sends is accepted, every enum it hardcodes matches,
+and every field the spec guarantees is modelled. It is the only check that
+compares codaio against something it did not write itself -- the mocked suite can
+only show that codaio calls the URL codaio meant to, which is how a method that
+called a nonexistent endpoint survived for years. It fails rather than skips when
+offline, since a check that quietly does nothing is worse than none.
+
+```shell script
+python -m pytest -m integration
+```
+
+runs against a real doc. It needs a doc of your own and a token restricted to it;
+running it without those prints the setup steps. The token must be doc-scoped and
+the suite refuses anything broader -- a workspace-wide token can create and delete
+docs, which is more authority than a test suite should hold.
+
+It cleans up nothing. Cleanup runs on the unhappy path and a half-finished sweep
+leaves the doc worse than none, so the test doc is disposable by hand: duplicate
+it when it gets cluttered. That means tests must assert on what the run created,
+by the id the create call returned -- never by name or count, which pass once.
 
 Check out the fixtures in `tests/conftest.py` if you want to improve the
 testing process. New tests should reuse `mock_json_response` /

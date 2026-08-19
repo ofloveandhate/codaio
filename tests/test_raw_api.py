@@ -1,96 +1,125 @@
 """
 The thin `Coda.*` wrappers around the raw API endpoints.
 
-Each of these is a one-liner that builds a URL and delegates, so the thing
-worth pinning down is that it hits the URL it claims to. Table-driven rather
-than one test per method, so adding an endpoint means adding a row.
+Each of these is a one-liner that builds a URL and delegates, so the thing worth
+pinning down is that it hits the URL it claims to. The expected URLs are not
+written here: they come from codaio._endpoints, so that one description drives
+these tests, the retry layer's idempotency classification, and the conformance
+check against the published spec.
+
+Note what this file can and cannot prove. It shows codaio calls the URL codaio
+intends to -- self-consistency, not correctness. An endpoint that does not exist
+passes every test here, which is exactly how `/docs/{docId}/folders` survived.
+Only the conformance check can catch that.
 """
 
 import pytest
 
+from codaio._endpoints import ENDPOINTS
 from tests.conftest import BASE_URL
 
-# (method name, kwargs, HTTP verb, expected path)
-ENDPOINTS = [
-    ("list_docs", {}, "GET", "/docs"),
-    ("get_doc", {"doc_id": "d1"}, "GET", "/docs/d1"),
-    ("delete_doc", {"doc_id": "d1"}, "DELETE", "/docs/d1"),
-    ("list_sections", {"doc_id": "d1"}, "GET", "/docs/d1/pages"),
-    ("get_section", {"doc_id": "d1", "section_id_or_name": "s1"}, "GET", "/docs/d1/pages/s1"),
-    ("list_folders", {"doc_id": "d1"}, "GET", "/docs/d1/folders"),
-    ("get_folder", {"doc_id": "d1", "folder_id_or_name": "f1"}, "GET", "/docs/d1/folders/f1"),
-    ("get_view", {"doc_id": "d1", "view_id_or_name": "v1"}, "GET", "/docs/d1/tables/v1"),
-    ("list_columns", {"doc_id": "d1", "table_id_or_name": "t1"}, "GET", "/docs/d1/tables/t1/columns"),
-    (
-        "get_column",
-        {"doc_id": "d1", "table_id_or_name": "t1", "column_id_or_name": "c1"},
-        "GET",
-        "/docs/d1/tables/t1/columns/c1",
-    ),
-    ("list_rows", {"doc_id": "d1", "table_id_or_name": "t1"}, "GET", "/docs/d1/tables/t1/rows"),
-    (
-        "get_row",
-        {"doc_id": "d1", "table_id_or_name": "t1", "row_id_or_name": "r1"},
-        "GET",
-        "/docs/d1/tables/t1/rows/r1",
-    ),
-    (
-        "delete_row",
-        {"doc_id": "d1", "table_id_or_name": "t1", "row_id_or_name": "r1"},
-        "DELETE",
-        "/docs/d1/tables/t1/rows/r1",
-    ),
-    ("list_formulas", {"doc_id": "d1"}, "GET", "/docs/d1/formulas"),
-    ("get_formula", {"doc_id": "d1", "formula_id_or_name": "fx"}, "GET", "/docs/d1/formulas/fx"),
-    ("list_controls", {"doc_id": "d1"}, "GET", "/docs/d1/controls"),
-    ("get_control", {"doc_id": "d1", "control_id_or_name": "ctl"}, "GET", "/docs/d1/controls/ctl"),
-    ("account", {}, "GET", "/whoami"),
-    ("resolve_browser_link", {"url": "https://coda.io/d/_dABC"}, "GET", "/resolveBrowserLink"),
-]
+# Arguments to call each method with. The URL it should produce is *not* here --
+# that comes from codaio._endpoints, so the path is written down once and the
+# conformance check compares the same string against the published spec.
+CALLS = {
+    "list_docs": {},
+    "get_doc": {"doc_id": "d1"},
+    "delete_doc": {"doc_id": "d1"},
+    "list_pages": {"doc_id": "d1"},
+    "get_page": {"doc_id": "d1", "page_id_or_name": "canvas-p1"},
+    "get_page_content": {"doc_id": "d1", "page_id_or_name": "canvas-p1"},
+    "get_page_export": {
+        "doc_id": "d1", "page_id_or_name": "canvas-p1", "request_id": "req-1",
+    },
+    "list_folders": {"workspace_id": "ws-1"},
+    "get_folder": {"folder_id": "fl-1"},
+    "create_folder": {"name": "Research", "workspace_id": "ws-1"},
+    "update_folder": {"folder_id": "fl-1", "name": "Renamed"},
+    "delete_folder": {"folder_id": "fl-1"},
+    "get_view": {"doc_id": "d1", "view_id_or_name": "v1"},
+    "list_columns": {"doc_id": "d1", "table_id_or_name": "t1"},
+    "get_column": {"doc_id": "d1", "table_id_or_name": "t1", "column_id_or_name": "c1"},
+    "list_rows": {"doc_id": "d1", "table_id_or_name": "t1"},
+    "get_row": {"doc_id": "d1", "table_id_or_name": "t1", "row_id_or_name": "r1"},
+    "delete_row": {"doc_id": "d1", "table_id_or_name": "t1", "row_id_or_name": "r1"},
+    "delete_rows": {
+        "doc_id": "d1", "table_id_or_name": "t1", "row_ids": ["i-1", "i-2"],
+    },
+    "push_button": {
+        "doc_id": "d1", "table_id_or_name": "t1", "row_id_or_name": "i-1",
+        "column_id_or_name": "c-1",
+    },
+    "get_mutation_status": {"request_id": "req-1"},
+    "update_doc": {"doc_id": "d1", "title": "Renamed"},
+    "get_acl_metadata": {"doc_id": "d1"},
+    "list_permissions": {"doc_id": "d1"},
+    "add_permission": {
+        "doc_id": "d1", "access": "readonly",
+        "principal": {"type": "email", "email": "a@example.com"},
+    },
+    "delete_permission": {"doc_id": "d1", "permission_id": "p-1"},
+    "search_principals": {"doc_id": "d1", "query": "alice"},
+    "get_acl_settings": {"doc_id": "d1"},
+    "update_acl_settings": {"doc_id": "d1", "allow_copying": False},
+    "list_formulas": {"doc_id": "d1"},
+    "get_formula": {"doc_id": "d1", "formula_id_or_name": "fx"},
+    "list_controls": {"doc_id": "d1"},
+    "get_control": {"doc_id": "d1", "control_id_or_name": "ctl"},
+    "account": {},
+    "resolve_browser_link": {"url": "https://coda.io/d/_dABC"},
+}
 
 
-@pytest.mark.parametrize(
-    "method,kwargs,verb,path", ENDPOINTS, ids=[e[0] for e in ENDPOINTS]
-)
-def test_endpoint_hits_expected_url(
-    coda, mock_json_response, mocked_responses, method, kwargs, verb, path
-):
-    mock_json_response(BASE_URL + path, "empty.json", method=verb)
+@pytest.mark.parametrize("name", sorted(CALLS), ids=sorted(CALLS))
+def test_endpoint_hits_expected_url(coda, mock_json_response, mocked_responses, name):
+    endpoint = ENDPOINTS[name]
+    path = endpoint.format(**CALLS[name])
 
-    getattr(coda, method)(**kwargs)
+    mock_json_response(BASE_URL + path, "empty.json", method=endpoint.method)
+
+    getattr(coda, name)(**CALLS[name])
 
     assert len(mocked_responses.calls) == 1
     called = mocked_responses.calls[0].request.url
     assert called.startswith(BASE_URL + path)
 
 
-def test_every_public_endpoint_is_covered():
+def test_every_registry_entry_is_a_real_method(coda):
+    """The registry describes `Coda`; an entry naming nothing is a typo."""
+    missing = [name for name in ENDPOINTS if not hasattr(coda, name)]
+    assert not missing, f"registry entries with no matching method: {sorted(missing)}"
+
+
+def test_every_public_endpoint_is_registered():
     """
-    Guards against a new endpoint being added without a row above. It is fine
-    to skip one deliberately -- add it to `known_untested` with a reason.
+    Guards against an endpoint being added without a registry entry.
+
+    Parses `Coda` rather than introspecting it, so a method that exists but is
+    never described in codaio._endpoints is caught -- which matters because the
+    registry is what the conformance check compares against the published spec.
+    Deliberate omissions go in `not_endpoints` with a reason.
     """
     import ast
     import pathlib
 
-    known_untested = {
-        # exercised through the object model in the other test modules
-        "create_doc",
-        "upsert_row",
-        "update_row",
-        "list_tables",
-        "get_table",
-        "list_views",
+    not_endpoints = {
+        # generic verbs and plumbing rather than endpoints
         "get",
         "post",
         "put",
+        "patch",
         "delete",
         "from_environment",
+        # pagination primitives; covered by tests/test_pagination_lazy.py
+        "iter_pages",
+        "iter_items",
     }
 
-    tree = ast.parse((pathlib.Path(__file__).parent.parent / "codaio" / "coda.py").read_text())
-    cls = next(
-        n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "Coda"
+    tree = ast.parse(
+        (pathlib.Path(__file__).parent.parent / "codaio" / "client.py").read_text()
     )
+    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "Coda")
+
     def is_property(fn):
         for dec in fn.decorator_list:
             if isinstance(dec, ast.Name) and dec.id == "property":
@@ -106,20 +135,82 @@ def test_every_public_endpoint_is_covered():
         and not fn.name.startswith("_")
         and not is_property(fn)
     }
-    tested = {e[0] for e in ENDPOINTS}
 
-    missing = public - tested - known_untested
-    assert not missing, f"raw endpoints with no test: {sorted(missing)}"
+    missing = public - set(ENDPOINTS) - not_endpoints
+    assert not missing, f"endpoints with no registry entry: {sorted(missing)}"
+
+
+def test_every_registered_endpoint_is_exercised():
+    """
+    Every registry entry is either called directly here or through the object
+    model elsewhere. Without this an entry could describe a URL nothing sends.
+    """
+    exercised_via_object_model = {
+        # deprecated spellings, covered by TestDeprecatedSpellings
+        "list_sections",
+        "get_section",
+        "create_doc",
+        "create_page",
+        "update_page",
+        "delete_page",
+        "delete_page_content",
+        "begin_page_export",
+        "upsert_row",
+        "update_row",
+        "list_tables",
+        "get_table",
+        "list_views",
+    }
+
+    missing = set(ENDPOINTS) - set(CALLS) - exercised_via_object_model
+    assert not missing, f"registered endpoints nothing exercises: {sorted(missing)}"
+
+
+class TestDeprecatedSpellings:
+    """
+    Pages were called sections when these were named, and the URLs have pointed
+    at /pages for years. The names still work, and say that they are the old ones.
+    """
+
+    def test_list_sections_warns_and_delegates(self, coda, mock_json_response,
+                                               mocked_responses):
+        mock_json_response(BASE_URL + "/docs/d1/pages", "empty.json")
+
+        with pytest.deprecated_call(match="list_pages"):
+            coda.list_sections("d1")
+
+        assert mocked_responses.calls[0].request.url.startswith(
+            BASE_URL + "/docs/d1/pages"
+        )
+
+    def test_get_section_warns_and_delegates(self, coda, mock_json_response,
+                                             mocked_responses):
+        mock_json_response(BASE_URL + "/docs/d1/pages/s1", "empty.json")
+
+        with pytest.deprecated_call(match="get_page"):
+            coda.get_section("d1", "s1")
+
+        assert mocked_responses.calls[0].request.url.startswith(
+            BASE_URL + "/docs/d1/pages/s1"
+        )
 
 
 class TestPagination:
-    def test_limit_is_capped_at_the_api_maximum(self, coda, mocked_responses):
-        from codaio.coda import MAX_GET_LIMIT
+    def test_limit_is_passed_through_rather_than_capped(self, coda, mocked_responses):
+        """
+        A caller's `limit` reaches the API unchanged.
+
+        It used to be rewritten down to MAX_GET_LIMIT, so asking for 700 results
+        quietly became a request for 200 and the caller was given no way to tell
+        the difference. The API documents that its own maximum varies by endpoint
+        and may change at any time, so the server's answer is the only honest one.
+        """
+        from codaio.client import MAX_GET_LIMIT
 
         mocked_responses.add("GET", BASE_URL + "/docs", json={"items": []})
         coda.list_docs(limit=MAX_GET_LIMIT + 500)
 
-        assert f"limit={MAX_GET_LIMIT}" in mocked_responses.calls[0].request.url
+        assert f"limit={MAX_GET_LIMIT + 500}" in mocked_responses.calls[0].request.url
 
     def test_offset_becomes_a_page_token(self, coda, mocked_responses):
         mocked_responses.add("GET", BASE_URL + "/docs", json={"items": []})

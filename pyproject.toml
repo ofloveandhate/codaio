@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "codaio"
-version = "0.8.0"
+version = "0.9.0"
 description = "Python wrapper for Coda.io API"
 authors = ["MB <mb@blaster.ai>", "silviana amethyst started modifying in fall 2025 <amethyst@mpi-cbg.de>"]
 license = "MIT"
@@ -20,15 +20,12 @@ decorator = "^5.1.1"
 # recommended way to use this library, so it has to work from a plain
 # `pip install codaio`. On Linux this pulls SecretStorage and cryptography.
 keyring = "^25.0"
-# Genuinely optional, and both need a deliberate opt-in anyway: python-dotenv
-# only matters if you set CODAIO_DOTENV, and httpx only if you set USE_HTTPX
-# (which coda.py has always soft-imported but never declared).
+# Genuinely optional, and needs a deliberate opt-in anyway: python-dotenv only
+# matters if you set CODAIO_DOTENV.
 python-dotenv = {version = "^1.0", optional = true}
-httpx = {version = "^0.27", optional = true}
 
 [tool.poetry.extras]
 dotenv = ["python-dotenv"]
-httpx = ["httpx"]
 
 # `dev-dependencies` is the deprecated spelling; this is the group form.
 [tool.poetry.group.dev.dependencies]
@@ -44,6 +41,19 @@ black = "^26.0"
 # 8.1 is the newest sphinx that still supports 3.10; 8.2+ needs 3.11
 sphinx = "^8.0"
 sphinx-rtd-theme = "^3.0"
+
+[tool.pytest.ini_options]
+# Docstring examples are run as tests. An example that is not executed drifts
+# from the code it documents and is worse than none, since it is quoted with
+# confidence. Anything needing a live client is written as a `.. code-block::`
+# instead, which doctest ignores and Sphinx still renders.
+addopts = "--doctest-modules -m 'not conformance and not integration'"
+testpaths = ["tests", "codaio"]
+doctest_optionflags = "NORMALIZE_WHITESPACE ELLIPSIS"
+markers = [
+    "conformance: compares codaio to the published OpenAPI spec. Needs network; run with -m conformance.",
+    "integration: runs against a real Coda doc. Needs a doc-scoped token; run with -m integration.",
+]
 
 [tool.coverage.paths]
 source = ["src", "*/site-packages"]
