@@ -33,6 +33,13 @@ python -m pytest -k keyring
 python -m pytest --cov=codaio --cov-report=term-missing
 ```
 
+**Run the suite on Python 3.10 before pushing.** CI covers 3.10 through 3.13, and some
+failures appear only on the floor — a green run on a newer interpreter proves less than it
+looks. This has already happened once: a test imported `tomllib`, which is in the standard
+library only from 3.11, so three of the four CI jobs passed and the oldest did not. Keep an
+interpreter at the floor version around and use it, rather than reasoning about which
+features are old enough.
+
 Two suites do not run by default. See `docs/source/testing.rst` for the whole picture,
 including how to set up a doc and a scoped token for the live one.
 
