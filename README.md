@@ -381,6 +381,10 @@ a code block instead, so it is always clear which examples are verified.
 
 #### Two suites that are not run by default
 
+The docs have a fuller page on all of this — what each suite proves, what it
+cannot, and how to set up a doc and a scoped token for the live one. Build them
+with `cd docs && make html`.
+
 Neither is in CI, and neither runs unless asked for.
 
 ```shell script

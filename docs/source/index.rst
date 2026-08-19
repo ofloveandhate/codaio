@@ -13,6 +13,8 @@ Project home: https://github.com/blasterai/codaio
    :maxdepth: 2
    :caption: Contents:
 
+   testing
+
 Credentials
 -----------
 
