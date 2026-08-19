@@ -70,7 +70,25 @@ class CodaValue:
 
 @attr.s(auto_attribs=True, eq=False, repr=False)
 class ImageValue(CodaValue):
-    """An image or attachment cell."""
+    """
+    An image or attachment cell.
+
+    >>> photo = parse_value({
+    ...     "@type": "ImageObject", "name": "dogs.jpg",
+    ...     "url": "https://codahosted.io/dogs.jpg", "status": "live",
+    ... })
+    >>> photo.name
+    'dogs.jpg'
+
+    Reading the bytes is a request to a content host, not to the API, so no
+    credentials are sent and codaio does not choose where they go -- the name
+    was typed by whoever can edit the doc:
+
+    .. code-block:: python
+
+        destination = my_safe_path_for(photo.name)
+        destination.write_bytes(photo.read())
+    """
 
     LD_TYPE: ClassVar[str] = "ImageObject"
 
@@ -169,6 +187,17 @@ class MoneyValue(CodaValue):
 
     `amount` is a `Decimal`. The API sends it as either a number or a string,
     and putting money through a float loses cents for no benefit.
+
+    >>> cost = parse_value(
+    ...     {"@type": "MonetaryAmount", "currency": "USD", "amount": "12.99"}
+    ... )
+    >>> cost.currency, cost.amount
+    ('USD', Decimal('12.99'))
+
+    Exact whether the API sent a string or a number:
+
+    >>> parse_value({"@type": "MonetaryAmount", "amount": 0.1}).amount
+    Decimal('0.1')
     """
 
     LD_TYPE: ClassVar[str] = "MonetaryAmount"
@@ -197,6 +226,20 @@ class RowValue(CodaValue):
 
     Named for the API's own schema. It is a *pointer to* a row, not a
     :class:`codaio.Row`; :meth:`resolve` fetches the row itself.
+
+    >>> link = parse_value({
+    ...     "@type": "StructuredValue", "additionalType": "row",
+    ...     "name": "Apple", "rowId": "i-tuVwxYz", "tableId": "grid-pqRst-U",
+    ...     "url": "https://coda.io/d/x", "tableUrl": "https://coda.io/d/x#t",
+    ... })
+    >>> link.name, link.row_id, link.table_id
+    ('Apple', 'i-tuVwxYz', 'grid-pqRst-U')
+
+    Following it needs the document it lives in:
+
+    .. code-block:: python
+
+        row = link.resolve(doc)
     """
 
     LD_TYPE: ClassVar[str] = "StructuredValue"
@@ -263,6 +306,29 @@ def parse_value(value):
     Lists are walked, since an array-valued cell holds one of these per entry.
     A string, number or boolean is returned unchanged -- wrapping those would
     make every ordinary cell awkward to use for no gain.
+
+    >>> parse_value("just text")
+    'just text'
+    >>> person = parse_value(
+    ...     {"@type": "Person", "name": "Alice", "email": "alice@example.com"}
+    ... )
+    >>> person.name, person.email
+    ('Alice', 'alice@example.com')
+
+    An array-valued cell holds one of these per entry:
+
+    >>> images = parse_value([
+    ...     {"@type": "ImageObject", "name": "a.png", "url": "https://x/a.png"},
+    ...     {"@type": "ImageObject", "name": "b.png", "url": "https://x/b.png"},
+    ... ])
+    >>> [image.name for image in images]
+    ['a.png', 'b.png']
+
+    A type this version does not model is kept rather than refused:
+
+    >>> value = parse_value({"@type": "SomethingNew", "detail": 42})
+    >>> value.type, value["detail"]
+    ('SomethingNew', 42)
     """
     if isinstance(value, list):
         return [parse_value(item) for item in value]
@@ -278,6 +344,28 @@ def serialize(value):
     Every write goes through this. Without it a `datetime` in a cell reaches
     `json.dumps` and raises `TypeError: Object of type datetime is not JSON
     serializable`, which is a poor way to find out.
+
+    >>> import datetime as dt
+    >>> serialize(dt.date(2020, 1, 2))
+    '2020-01-02'
+
+    Money keeps its precision, because a float would not:
+
+    >>> import decimal
+    >>> serialize(decimal.Decimal("12.99"))
+    '12.99'
+
+    A typed value goes back exactly as the API sent it, so a value read and
+    written again is unchanged:
+
+    >>> image = parse_value({"@type": "ImageObject", "url": "https://x/a.png"})
+    >>> serialize(image)
+    {'@type': 'ImageObject', 'url': 'https://x/a.png'}
+
+    Containers are walked:
+
+    >>> serialize({"when": dt.date(2020, 1, 2), "how_many": [1, 2]})
+    {'when': '2020-01-02', 'how_many': [1, 2]}
     """
     if isinstance(value, CodaValue):
         return value.to_json()
@@ -307,6 +395,22 @@ def unwrap_rich_text(text: str) -> str:
     code block is indistinguishable from a wrapped plain string, so this is never
     applied automatically. Use it when you have decided you want text rather than
     Markdown.
+
+    >>> unwrap_rich_text("```just some text```")
+    'just some text'
+
+    Formatted Markdown is left alone:
+
+    >>> unwrap_rich_text("**bold** text")
+    '**bold** text'
+
+    And the ambiguous case, which is why nothing does this for you -- a cell
+    whose Markdown really is a fenced code block looks exactly like a plain
+    string that was wrapped:
+
+    >>> unwrap_rich_text("```SUM(Total)```")
+    'SUM(Total)'
+
     """
     if not isinstance(text, str):
         return text
@@ -315,7 +419,14 @@ def unwrap_rich_text(text: str) -> str:
 
 
 def is_rich(value) -> bool:
-    """Whether this value came back as a structured object rather than a scalar."""
+    """
+    Whether this value came back as a structured object rather than a scalar.
+
+    >>> is_rich("text")
+    False
+    >>> is_rich(parse_value({"@type": "Person", "name": "Alice"}))
+    True
+    """
     if isinstance(value, list):
         return any(is_rich(item) for item in value)
     return isinstance(value, (CodaValue, dict))

@@ -50,6 +50,18 @@ class Reference:
     column's `parent` table, a page's `children`. They carry an id and a name but
     not the full object, so they are cheap to return and can be followed on
     demand with :meth:`resolve`.
+
+    >>> reference = Reference.from_json(
+    ...     {"id": "canvas-1", "type": "page", "name": "Launch"}
+    ... )
+    >>> reference
+    PageReference(id='canvas-1', name='Launch')
+
+    Fetching what it points at needs the document it lives in:
+
+    .. code-block:: python
+
+        page = table.parent.resolve(doc)
     """
 
     id: str = None
@@ -234,6 +246,16 @@ class CodaObject:
         Keys are matched by their snake_case spelling. Anything unmatched goes to
         `.raw` only -- which is the whole point: the API adding a field must not
         be able to break a caller who never asked about it.
+
+        >>> from codaio import Page
+        >>> page = Page.from_json({
+        ...     "id": "canvas-1", "type": "page", "name": "Launch",
+        ...     "isHidden": False, "aFieldFromNextYear": {"kept": True},
+        ... })
+        >>> page.name, page.is_hidden
+        ('Launch', False)
+        >>> page.unknown_fields
+        {'aFieldFromNextYear': {'kept': True}}
         """
         known = cls._init_names()
         kwargs = {}
@@ -265,6 +287,17 @@ class CodaObject:
         `page.field("subtitle")` and `page.field("isHidden")` both work, so a
         field codaio has not modelled yet is still reachable without digging
         through `.raw` by hand.
+
+        >>> from codaio import Page
+        >>> page = Page.from_json(
+        ...     {"id": "canvas-1", "type": "page", "isHidden": True, "brandNew": 7}
+        ... )
+        >>> page.field("isHidden"), page.field("is_hidden")
+        (True, True)
+        >>> page.field("brandNew")
+        7
+        >>> page.field("nothing_like_this", "fallback")
+        'fallback'
         """
         if key in self.raw:
             return self.raw[key]
@@ -280,6 +313,10 @@ class CodaObject:
 
         Empty when codaio is up to date with the API. Non-empty is a to-do list,
         not an error.
+
+        >>> from codaio import Table
+        >>> Table.from_json({"id": "grid-1", "type": "table"}).unknown_fields
+        {}
         """
         known = self._init_names()
         return {
@@ -302,6 +339,22 @@ class CodaObject:
         is still that row, and comparing by content would also drag in the back
         references -- so whether two rows were equal would depend on which client
         fetched them, which is not a question anyone means to ask.
+
+        >>> from codaio import Page, Table
+        >>> before = Page.from_json({"id": "canvas-1", "type": "page", "name": "A"})
+        >>> after = Page.from_json({"id": "canvas-1", "type": "page", "name": "B"})
+        >>> before == after
+        True
+
+        Compare what you actually mean when you mean content:
+
+        >>> before.name == after.name
+        False
+
+        Nothing of a different class matches, even sharing an id:
+
+        >>> Page.from_json({"id": "x"}) == Table.from_json({"id": "x"})
+        False
         """
         if type(self) is not type(other):
             return NotImplemented

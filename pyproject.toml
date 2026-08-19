@@ -42,6 +42,15 @@ black = "^26.0"
 sphinx = "^8.0"
 sphinx-rtd-theme = "^3.0"
 
+[tool.pytest.ini_options]
+# Docstring examples are run as tests. An example that is not executed drifts
+# from the code it documents and is worse than none, since it is quoted with
+# confidence. Anything needing a live client is written as a `.. code-block::`
+# instead, which doctest ignores and Sphinx still renders.
+addopts = "--doctest-modules"
+testpaths = ["tests", "codaio"]
+doctest_optionflags = "NORMALIZE_WHITESPACE ELLIPSIS"
+
 [tool.coverage.paths]
 source = ["src", "*/site-packages"]
 

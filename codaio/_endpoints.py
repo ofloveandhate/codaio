@@ -51,7 +51,14 @@ class Endpoint:
     success: Tuple[int, ...] = (200,)
 
     def format(self, **kwargs) -> str:
-        """Fill the placeholders from `args`, ignoring any other keyword given."""
+        """
+        Fill the placeholders from `args`, ignoring any other keyword given.
+
+        >>> ENDPOINTS["get_row"].format(
+        ...     doc_id="AbCDeFGH", table_id_or_name="grid-1", row_id_or_name="i-1"
+        ... )
+        '/docs/AbCDeFGH/tables/grid-1/rows/i-1'
+        """
         path = self.path
         for name in self.args:
             path = _PLACEHOLDER.sub(str(kwargs[name]), path, count=1)
@@ -92,6 +99,11 @@ def looks_like_page_id(value: str) -> bool:
 
     Conservative on purpose: anything that is not recognisably an id is treated
     as a name, and a name is never safe to replay.
+
+    >>> looks_like_page_id("canvas-IjkLmnO")
+    True
+    >>> looks_like_page_id("Launch Status")
+    False
     """
     return isinstance(value, str) and value.startswith(ID_PREFIXES["page"])
 
@@ -102,6 +114,35 @@ def page_update_idempotency(page_id_or_name: str, data: Dict) -> Idempotency:
 
     Three arguments decide it, which is exactly why this cannot be a per-method
     constant and must not be left to callers.
+
+    Renaming a page ends in the same state however many times it runs:
+
+    >>> page_update_idempotency("canvas-1", {"name": "Launch"})
+    <Idempotency.IDEMPOTENT: 'idempotent'>
+
+    Appending content does not -- a replay adds it twice:
+
+    >>> page_update_idempotency(
+    ...     "canvas-1",
+    ...     {"contentUpdate": {"insertionMode": "append", "canvasContent": {}}},
+    ... )
+    <Idempotency.UNSAFE: 'unsafe'>
+
+    Nor does replacing one element, since the first attempt consumes the id the
+    retry would need -- and a missing elementId means "the entire page":
+
+    >>> page_update_idempotency(
+    ...     "canvas-1",
+    ...     {"contentUpdate": {"insertionMode": "replace", "elementId": "cl-9",
+    ...                        "canvasContent": {}}},
+    ... )
+    <Idempotency.UNSAFE: 'unsafe'>
+
+    And addressing a page by name is never replayable, because the API picks an
+    arbitrary match among pages sharing that name:
+
+    >>> page_update_idempotency("Launch Status", {"name": "Renamed"})
+    <Idempotency.UNSAFE: 'unsafe'>
     """
     if not looks_like_page_id(page_id_or_name):
         # An arbitrary page among those sharing the name would be chosen, and it

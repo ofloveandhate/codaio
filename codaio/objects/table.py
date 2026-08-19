@@ -132,6 +132,20 @@ class Table(CodaObject):
 
         See :meth:`codaio.Coda.list_rows` for the rest, including why
         `value_format` is worth setting and what `visible_only` does to columns.
+
+        .. code-block:: python
+
+            for row in table.iter_rows(value_format="rich"):
+                print(row["Name"].value)
+
+        Reading with ``rich`` is what turns image, person and relation cells into
+        the classes in :mod:`codaio.values`; the API's default flattens them.
+
+        .. code-block:: python
+
+            for row in table.iter_rows(value_format="rich"):
+                for image in row["Attachments"].value:
+                    save_somewhere(image.name, image.read())
         """
         params = dict(data or {})
         params["useColumnNames"] = use_column_names
@@ -186,6 +200,13 @@ class Table(CodaObject):
         return list(self.iter_rows(limit=limit, data=data, **kwargs))
 
     def get_row_by_id(self, row_id: str) -> Row:
+        """
+        Fetch one row by its id.
+
+        .. code-block:: python
+
+            row = table.get_row_by_id("i-tuVwxYz")
+        """
         row_js = self.document.coda.get_row(self.document.id, self.id, row_id)
         row = Row.from_json(row_js, document=self.document, table=self)
         return row
@@ -337,6 +358,22 @@ class Table(CodaObject):
 
         :return: a `Mutation`. The write is accepted, not yet applied -- call
             `.wait()` when you need it to have landed.
+
+        .. code-block:: python
+
+            table.upsert_row([
+                Cell("Name", "Bramley"),
+                Cell("Cost", "1.20"),
+            ]).wait()
+
+        Give `key_columns` to update a matching row instead of adding one:
+
+        .. code-block:: python
+
+            table.upsert_row(
+                [Cell("Name", "Bramley"), Cell("Cost", "1.40")],
+                key_columns=["Name"],
+            ).wait()
         """
 
         return self.upsert_rows([cells], key_columns)
@@ -455,6 +492,14 @@ class Table(CodaObject):
         :param chunk: how many ids to send per request.
 
         :return: a `MutationGroup` -- one mutation per request made.
+
+        .. code-block:: python
+
+            stale = [row for row in table.iter_rows() if row["Done"].value]
+            table.delete_rows(stale).wait()
+
+        Deleting nothing raises rather than making the request, since an empty
+        list is nearly always a filter that matched nothing.
         """
         row_ids = [row.id if isinstance(row, Row) else row for row in rows]
         if not row_ids:
@@ -568,10 +613,17 @@ class Row(CodaObject):
         return meta_super | meta # using https://peps.python.org/pep-0584/
 
 
-    def columns(self):
+    def columns(self) -> List[Column]:
+        """The columns of the table this row belongs to."""
         return self.table.columns()
 
-    def refresh(self):
+    def refresh(self) -> Row:
+        """
+        Re-read this row's values from the API, in place.
+
+        Worth doing after a write: Coda coerces values to the column's format, so
+        what it stored may differ from what was sent.
+        """
         new_data = self.table.document.coda.get_row(
             self.table.document.id, self.table.id, self.id
         )
@@ -579,6 +631,16 @@ class Row(CodaObject):
         return self
 
     def cells(self) -> List[Cell]:
+        """
+        This row's cells, one per value it carries.
+
+        Rebuilt on each call, so hold on to the list rather than asking twice.
+
+        .. code-block:: python
+
+            for cell in row.cells():
+                print(cell.name, cell.value)
+        """
         return [
             Cell(column=self.table.get_column_by_id(i[0]), value_storage=i[1], row=self)
             for i in self.values
@@ -593,6 +655,10 @@ class Row(CodaObject):
         return self.table.delete_row(self)
 
     def get_cell_by_column_id(self, column_id: str) -> Cell:
+        """
+        One cell of this row, by column id. Raises `KeyError` if the row has no
+        value for that column.
+        """
         try:
             return next(filter(lambda x: x.column.id == column_id, self.cells()))
         except StopIteration:
@@ -703,15 +769,18 @@ class Cell:
     row: Row = attr.ib(default=None)
 
     @property
-    def name(self):
+    def name(self) -> str:
+        """The column's name, or the string the cell was built with."""
         return self.column.name if isinstance(self.column, Column) else self.column
 
     @property
-    def table(self):
+    def table(self) -> "Table":
+        """The table this cell's row belongs to."""
         return self.row.table
 
     @property
     def document(self):
+        """The document this cell's table belongs to."""
         return self.table.document
 
     def __repr__(self):
@@ -758,7 +827,13 @@ class Cell:
         return unwrap_rich_text(self.value_storage)
 
     @property
-    def column_id_or_name(self):
+    def column_id_or_name(self) -> str:
+        """
+        What to send the API to identify this cell's column.
+
+        A `Column`'s id, or whatever string the cell was built with -- the API
+        accepts an id, a URL or a name.
+        """
         if isinstance(self.column, Column):
             return self.column.id
         elif isinstance(self.column, str):
@@ -785,6 +860,20 @@ class Cell:
 
         :param wait: set False for bulk work and wait on the returned `Mutation`
             yourself, or not at all.
+
+        .. code-block:: python
+
+            row["Cost"] = "1.40"                  # waits, then re-reads
+            cell = row["Cost"]
+            print(cell.value)                     # 1.4 -- Coda coerced it
+
+        For many writes, fire them and wait once:
+
+        .. code-block:: python
+
+            writes = [row["Done"].set(True, wait=False) for row in rows]
+            for write in writes:
+                write.wait()
         """
         mutation = self.row.table.update_row(self.row, [Cell(self.column, value)])
         if wait:

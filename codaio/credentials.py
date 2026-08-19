@@ -106,7 +106,12 @@ class Resolution(NamedTuple):
 
 
 def default_keyring_profile(keyring_profile: Optional[str] = None) -> str:
-    """Explicit argument, else ``CODA_KEYRING_PROFILE``, else ``"default"``."""
+    """
+    Explicit argument, else ``CODA_KEYRING_PROFILE``, else ``"default"``.
+
+    >>> default_keyring_profile("research")
+    'research'
+    """
     return (
         keyring_profile
         or os.environ.get(ENV_KEYRING_PROFILE)
@@ -115,7 +120,14 @@ def default_keyring_profile(keyring_profile: Optional[str] = None) -> str:
 
 
 def keyring_profile_env_var(keyring_profile: str) -> str:
-    """Per-profile override variable, e.g. ``research`` -> ``CODA_API_KEY_RESEARCH``."""
+    """
+    Per-profile override variable, e.g. ``research`` -> ``CODA_API_KEY_RESEARCH``.
+
+    >>> keyring_profile_env_var("research")
+    'CODA_API_KEY_RESEARCH'
+    >>> keyring_profile_env_var("my project")
+    'CODA_API_KEY_MY_PROJECT'
+    """
     slug = re.sub(r"[^0-9A-Za-z]+", "_", keyring_profile).strip("_").upper()
     return f"{ENV_API_KEY}_{slug}"
 

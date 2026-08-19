@@ -51,7 +51,20 @@ PAGE_LINE_STYLES = frozenset({
 
 @attr.s(auto_attribs=True)
 class CanvasContent:
-    """Markdown or HTML to put on a page."""
+    """
+    Markdown or HTML to put on a page.
+
+    >>> CanvasContent("# Hello").to_json()
+    {'type': 'canvas', 'canvasContent': {'format': 'markdown', 'content': '# Hello'}}
+
+    A plain string is taken as Markdown wherever content is accepted, so this
+    class is only needed to say otherwise:
+
+    .. code-block:: python
+
+        page.append("## A new section")
+        page.append(CanvasContent("<h2>A new section</h2>", format="html"))
+    """
 
     content: str
     format: str = "markdown"
@@ -132,10 +145,12 @@ class ContentItem(CodaObject):
 
     @property
     def content(self) -> Optional[str]:
+        """The line's text. Plain text -- the synchronous read offers nothing else."""
         return (self.item_content or {}).get("content")
 
     @property
     def format(self) -> Optional[str]:
+        """The content format. Only `plainText` is available from this endpoint."""
         return (self.item_content or {}).get("format")
 
     @property
@@ -162,6 +177,23 @@ class PageExport:
     export is a write against the tightest rate-limit bucket, so a caller
     exporting many pages needs to start them and collect them on their own terms.
     :meth:`wait` is there when that does not matter.
+
+    One page, the simple way:
+
+    .. code-block:: python
+
+        markdown = page.export_text("markdown")
+
+    Many pages, without waiting on each in turn. Starting an export is a write
+    against the five-per-ten-seconds bucket, so start them steadily rather than
+    all at once:
+
+    .. code-block:: python
+
+        exports = [page.begin_export("markdown") for page in doc.list_pages()]
+        for export in exports:
+            path = f"{export.page.id}.md"
+            Path(path).write_text(export.wait().text())
     """
 
     page: "Page" = attr.ib(repr=False)
@@ -211,9 +243,11 @@ class PageExport:
 
     @property
     def failed(self) -> bool:
+        """Whether the export finished unsuccessfully."""
         return bool(self.error)
 
     def raise_for_error(self) -> "PageExport":
+        """Raise `err.ExportFailed` if the export failed; return self otherwise."""
         if self.error:
             raise err.ExportFailed(
                 f"exporting page {self.page.id!r} failed: {self.error}"
@@ -333,14 +367,17 @@ class Page(CodaObject):
 
     @property
     def is_canvas(self) -> bool:
+        """Whether this page holds editable content, as opposed to an embed or a sync."""
         return self.content_type == CANVAS
 
     @property
     def is_embed(self) -> bool:
+        """Whether this page wraps an external URL."""
         return self.content_type == EMBED
 
     @property
     def is_sync_page(self) -> bool:
+        """Whether this page mirrors another doc or page."""
         return self.content_type == SYNC_PAGE
 
     # -- reading content --------------------------------------------------
@@ -405,6 +442,10 @@ class Page(CodaObject):
 
         There is no way to reparent a page: `PageUpdate` has no field for it, so
         the API cannot move pages and neither can this.
+
+        .. code-block:: python
+
+            page.update(name="Launch Status", subtitle="Updated weekly").wait()
         """
         data = {}
         for key, value in (
@@ -447,6 +488,19 @@ class Page(CodaObject):
         Replace the page's content, or just `element_id`'s.
 
         Without `element_id` this replaces everything on the page.
+
+        .. code-block:: python
+
+            page.replace("# Fresh start")           # the whole page
+
+        With an element id it replaces just that line. Note codaio will not retry
+        that form if the request is inconclusive: the first attempt consumes the
+        element, and a missing element id means "the entire page" to the API.
+
+        .. code-block:: python
+
+            first = page.content()[0]
+            page.replace("## A better heading", element_id=first.id)
         """
         return self._content_update("replace", content, element_id)
 
@@ -498,6 +552,28 @@ class PageTree:
     Both directions are used: `children` gives the order pages appear in, which
     a `parent`-only reconstruction cannot recover, and `parent` gives the
     structure, which covers any page the `children` arrays happen to miss.
+
+    >>> from codaio import Page
+    >>> pages = [
+    ...     Page.from_json({"id": "canvas-1", "type": "page", "name": "Handbook",
+    ...                     "children": [{"id": "canvas-2", "type": "page"}]}),
+    ...     Page.from_json({"id": "canvas-2", "type": "page", "name": "Onboarding",
+    ...                     "parent": {"id": "canvas-1", "type": "page"}}),
+    ... ]
+    >>> tree = PageTree.from_pages(pages)
+    >>> [page.name for page in tree.roots]
+    ['Handbook']
+    >>> [(page.name, depth) for page, depth in tree.walk()]
+    [('Handbook', 0), ('Onboarding', 1)]
+
+    In practice you get one from a document, which costs a single request
+    because each page carries both its parent and its children:
+
+    .. code-block:: python
+
+        tree = doc.page_tree()
+        for page, depth in tree.walk():
+            print("  " * depth + page.name)
     """
 
     roots: List[Page]
@@ -568,6 +644,17 @@ class PageTree:
         Iterative, and it refuses to revisit a page. The API should never return
         a cycle, but this tree is built from whatever arrives, and a hang is a
         much worse way to find out than a clear error.
+
+        >>> from codaio import Page
+        >>> tree = PageTree.from_pages([
+        ...     Page.from_json({"id": "canvas-1", "type": "page", "name": "Visible"}),
+        ...     Page.from_json({"id": "canvas-2", "type": "page", "name": "Draft",
+        ...                     "isHidden": True}),
+        ... ])
+        >>> [page.name for page, _ in tree.walk()]
+        ['Visible', 'Draft']
+        >>> [page.name for page, _ in tree.walk(include_hidden=False)]
+        ['Visible']
         """
         seen = set()
         stack = [(page, 0) for page in reversed(self.roots)]
@@ -586,7 +673,21 @@ class PageTree:
             )
 
     def path(self, page: Union[Page, str]) -> List[Page]:
-        """The pages from the root down to this one, inclusive."""
+        """
+        The pages from the root down to this one, inclusive.
+
+        Useful for mirroring a doc's structure on disk:
+
+        >>> from codaio import Page
+        >>> tree = PageTree.from_pages([
+        ...     Page.from_json({"id": "canvas-1", "type": "page", "name": "Handbook",
+        ...                     "children": [{"id": "canvas-2", "type": "page"}]}),
+        ...     Page.from_json({"id": "canvas-2", "type": "page", "name": "Onboarding",
+        ...                     "parent": {"id": "canvas-1", "type": "page"}}),
+        ... ])
+        >>> "/".join(page.name for page in tree.path("canvas-2"))
+        'Handbook/Onboarding'
+        """
         page_id = page.id if isinstance(page, Page) else page
         out = []
         seen = set()

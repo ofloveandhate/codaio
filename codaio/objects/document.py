@@ -163,6 +163,11 @@ class Document:
 
         Each page carries both its parent and its children, so no extra requests
         are needed to work out the shape.
+
+        .. code-block:: python
+
+            for page, depth in doc.page_tree().walk():
+                print("  " * depth + page.name)
         """
         return PageTree.from_pages(self.list_pages())
 
@@ -188,6 +193,17 @@ class Document:
             `EmbedContent`, `SyncPageContent`.
 
         :return:
+
+        .. code-block:: python
+
+            doc.create_page("Notes", content="# Notes\n\nStarted today.").wait()
+
+        Nest it under another page by passing that page or its id:
+
+        .. code-block:: python
+
+            handbook = doc.get_page("canvas-IjkLmnO")
+            doc.create_page("Onboarding", parent_page=handbook).wait()
         """
         data = {}
         for key, value in (

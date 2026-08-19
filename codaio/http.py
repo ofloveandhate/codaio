@@ -64,6 +64,14 @@ def assert_same_origin(url: str, expected: str) -> None:
     hosts, but a paginated response hands us a `nextPageLink` from the
     response body and we fetch it directly, which sidesteps that protection.
     A hostile or buggy link would otherwise receive the bearer token.
+
+    >>> assert_same_origin(
+    ...     "https://coda.io/apis/v1/docs?pageToken=x", "https://coda.io/apis/v1"
+    ... )
+    >>> assert_same_origin("https://evil.example/steal", "https://coda.io/apis/v1")
+    Traceback (most recent call last):
+        ...
+    codaio.err.UntrustedHost: refusing to send the API token to 'evil.example', ...
     """
     if _origin(url) != _origin(expected):
         raise err.UntrustedHost(
@@ -142,6 +150,14 @@ def retry_after_seconds(response) -> float:
 
     The header is defined as either a number of seconds or an HTTP-date; both
     appear in practice, so both are handled.
+
+    >>> import requests
+    >>> response = requests.Response()
+    >>> response.headers["Retry-After"] = "30"
+    >>> retry_after_seconds(response)
+    30.0
+    >>> retry_after_seconds(requests.Response()) is None
+    True
     """
     raw = response.headers.get("Retry-After") if response is not None else None
     if not raw:
@@ -213,7 +229,22 @@ class RetryPolicy:
     clock: Callable[[], float] = time.monotonic
 
     def delay_for(self, attempt: int) -> float:
-        """Backoff before retry number `attempt` (1-based)."""
+        """
+        Backoff before retry number `attempt` (1-based).
+
+        >>> policy = RetryPolicy(jitter=False)
+        >>> [policy.delay_for(n) for n in (1, 2, 3)]
+        [0.5, 1.0, 2.0]
+
+        Jitter is on by default, so real delays vary within that shape. Tests
+        pass `sleep` and `clock` instead of waiting:
+
+        .. code-block:: python
+
+            coda = Coda(retry=RetryPolicy(attempts=8, max_backoff=60))
+            patient = Coda(retry=RetryPolicy(attempts=20))
+            never = Coda(retry=None)
+        """
         raw = min(self.backoff * (self.multiplier ** (attempt - 1)), self.max_backoff)
         if self.jitter:
             raw *= 0.5 + random.random() * 0.5
@@ -231,6 +262,13 @@ def _retry_allowed(status: int, idempotency: Idempotency) -> bool:
     replaying it is safe no matter what it would have done. Every other retryable
     status is a genuine server-side failure of unknown effect, so only reads and
     converging writes may be replayed.
+
+    >>> _retry_allowed(429, Idempotency.UNSAFE)
+    True
+    >>> _retry_allowed(500, Idempotency.UNSAFE)
+    False
+    >>> _retry_allowed(500, Idempotency.SAFE)
+    True
     """
     if status == 429:
         return True

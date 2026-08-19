@@ -94,6 +94,7 @@ class Mutation:
 
     @property
     def done(self) -> bool:
+        """Whether the API has reported this edit dealt with. See `completed`."""
         return self.completed
 
     def wait(
@@ -112,6 +113,16 @@ class Mutation:
         Raises :class:`codaio.err.MutationTimeout` rather than looping forever.
         The timeout is not proof the edit failed -- it is almost always still
         queued -- so the error carries the request id to poll again later.
+
+        .. code-block:: python
+
+            write = table.upsert_row(cells)
+            write.wait()
+            if write.warning:
+                print("the API did something other than asked:", write.warning)
+
+        `completed` is not success. The status endpoint has no failure field, so
+        re-read the rows when it matters that the edit did what you meant.
         """
         if self.completed or not self.request_id:
             return self
@@ -156,14 +167,17 @@ class MutationGroup:
         return self
 
     def refresh(self) -> "MutationGroup":
+        """Ask about every mutation once."""
         for mutation in self.mutations:
             mutation.refresh()
         return self
 
     @property
     def completed(self) -> bool:
+        """Whether every write in this group has been dealt with."""
         return all(mutation.completed for mutation in self.mutations)
 
+    #: Alias of :attr:`completed`, matching `Mutation.done`.
     done = completed
 
     @property
@@ -173,10 +187,12 @@ class MutationGroup:
 
     @property
     def request_ids(self) -> List[str]:
+        """Every request id in this group, for polling later."""
         return [m.request_id for m in self.mutations if m.request_id]
 
     @property
     def row_ids(self) -> List[str]:
+        """Every row id these writes reported, across the group."""
         out: List[str] = []
         for mutation in self.mutations:
             out.extend(mutation.row_ids)
