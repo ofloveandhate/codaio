@@ -13,6 +13,7 @@ import requests
 from codaio import credentials, err
 from codaio._endpoints import (
     ENDPOINTS,
+    check_grantable,
     ROW_SORT_ORDERS,
     VALUE_FORMATS,
     PAGE_EXPORT_FORMATS,
@@ -430,7 +431,15 @@ class Coda:
             data["folderId"] = folder_id
         return self.get("/docs", data=data, limit=limit, offset=offset)
 
-    def create_doc(self, title: str, source_doc: str = None, tz: str = None) -> Dict:
+    def create_doc(
+        self,
+        title: str,
+        source_doc: str = None,
+        tz: str = None,
+        *,
+        folder_id: str = None,
+        initial_page: Dict = None,
+    ) -> Dict:
         """
         Creates a new Coda doc, optionally copying an existing doc.
 
@@ -442,15 +451,52 @@ class Coda:
 
         :param tz: The timezone to use for the newly created doc.
 
+        :param folder_id: which folder to create it in.
+
+        :param initial_page: a `PageCreate` body for the doc's first page.
+
         :return:
+
+        Copying an existing doc is the sanctioned way to get a doc with tables
+        already in it, since tables cannot be created through the API:
+
+        .. code-block:: python
+
+            coda.create_doc("This week", source_doc="AbCDeFGH", folder_id="fl-1")
         """
         data = {"title": title}
         if source_doc:
             data["sourceDoc"] = source_doc
         if tz:
             data["timezone"] = tz
+        if folder_id:
+            data["folderId"] = folder_id
+        if initial_page:
+            data["initialPage"] = initial_page
 
         return self.post("/docs", data, idempotency=ENDPOINTS["create_doc"].idempotency)
+
+    def update_doc(self, doc_id: str, *, title: str = None, icon_name: str = None) -> Dict:
+        """
+        Renames a doc or changes its icon.
+
+        Answers 200 rather than 202: unlike most writes, this one is applied by
+        the time it returns.
+
+        .. code-block:: python
+
+            coda.update_doc(doc_id, title="Q3 planning")
+        """
+        data = {}
+        if title is not None:
+            data["title"] = title
+        if icon_name is not None:
+            data["iconName"] = icon_name
+        if not data:
+            raise err.InvalidQuery("update_doc was given nothing to change")
+        return self.patch(
+            f"/docs/{doc_id}", data, idempotency=ENDPOINTS["update_doc"].idempotency
+        )
 
     def get_doc(self, doc_id: str) -> Dict:
         """
@@ -1265,6 +1311,126 @@ class Coda:
         :return:
         """
         return self.get(f"/mutationStatus/{request_id}")
+
+    # ----------------------------------------------------------------------
+    # Sharing
+    # ----------------------------------------------------------------------
+
+    def get_acl_metadata(self, doc_id: str) -> Dict:
+        """
+        What this token may do about sharing the doc.
+
+        Worth checking before trying: a token can be able to read a doc without
+        being able to change who else can.
+
+        .. code-block:: python
+
+            if coda.get_acl_metadata(doc_id)["canShare"]:
+                ...
+        """
+        return self.get(f"/docs/{doc_id}/acl/metadata")
+
+    def list_permissions(self, doc_id: str, offset: str = None, limit: int = None) -> Dict:
+        """
+        Who currently has access to the doc.
+
+        :param limit: Maximum number of results to return in this query.
+
+        :param offset: An opaque token used to fetch the next page of results.
+        """
+        return self.get(f"/docs/{doc_id}/acl/permissions", offset=offset, limit=limit)
+
+    def add_permission(
+        self, doc_id: str, *, access: str, principal: Dict, suppress_email: bool = None
+    ) -> Dict:
+        """
+        Grants access to the doc.
+
+        `access` is keyword-only and has no default. This is the one call in the
+        library where a defaulting mistake hands data to the wrong person, so it
+        has to be said out loud.
+
+        :param access: "readonly", "write" or "comment". Not "none" -- that is a
+            level permissions are read as, and taking access away is
+            :meth:`delete_permission`.
+
+        :param principal: who to grant it to, as the API's payload. Build one
+            with :class:`codaio.Principal`.
+
+        :param suppress_email: do not email the recipient. Note that leaving this
+            off means a retry of an inconclusive request could send a second
+            invitation, so codaio will not replay it.
+
+        .. code-block:: python
+
+            coda.add_permission(
+                doc_id,
+                access="readonly",
+                principal=Principal.email("alice@example.com").to_json(),
+                suppress_email=True,
+            )
+        """
+        check_grantable(access)
+        data = {"access": access, "principal": principal}
+        if suppress_email is not None:
+            data["suppressEmail"] = suppress_email
+        return self.post(
+            f"/docs/{doc_id}/acl/permissions", data,
+            idempotency=(
+                Idempotency.IDEMPOTENT if suppress_email
+                else Idempotency.UNSAFE
+            ),
+        )
+
+    def delete_permission(self, doc_id: str, permission_id: str) -> Dict:
+        """Revokes one grant of access."""
+        return self.delete(
+            f"/docs/{doc_id}/acl/permissions/{permission_id}",
+            idempotency=ENDPOINTS["delete_permission"].idempotency,
+        )
+
+    def search_principals(self, doc_id: str, query: str = None) -> Dict:
+        """
+        Finds people and groups that could be given access to the doc.
+
+        :param query: what to search for.
+        """
+        data = {"query": query} if query else None
+        return self.get(f"/docs/{doc_id}/acl/principals/search", data=data)
+
+    def get_acl_settings(self, doc_id: str) -> Dict:
+        """The doc's sharing settings, as opposed to its individual permissions."""
+        return self.get(f"/docs/{doc_id}/acl/settings")
+
+    def update_acl_settings(
+        self,
+        doc_id: str,
+        *,
+        allow_editors_to_change_permissions: bool = None,
+        allow_copying: bool = None,
+        allow_viewers_to_request_editing: bool = None,
+    ) -> Dict:
+        """
+        Changes the doc's sharing settings. Only what is passed is changed.
+
+        .. code-block:: python
+
+            coda.update_acl_settings(doc_id, allow_copying=False)
+        """
+        data = {}
+        for key, value in (
+            ("allowEditorsToChangePermissions", allow_editors_to_change_permissions),
+            ("allowCopying", allow_copying),
+            ("allowViewersToRequestEditing", allow_viewers_to_request_editing),
+        ):
+            if value is not None:
+                data[key] = value
+        if not data:
+            raise err.InvalidQuery("update_acl_settings was given nothing to change")
+        return self.patch(
+            f"/docs/{doc_id}/acl/settings", data,
+            idempotency=ENDPOINTS["update_acl_settings"].idempotency,
+        )
 
     def list_formulas(self, doc_id: str, offset: int = None, limit: int = None) -> Dict:
         """

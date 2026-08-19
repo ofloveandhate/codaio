@@ -26,6 +26,21 @@ from .objects.page import (  # noqa
     PageTree,
     SyncPageContent,
 )
+from .objects.acl import (  # noqa
+    AccessType,
+    AclMetadata,
+    AclSettings,
+    AnyonePrincipal,
+    DomainPrincipal,
+    EmailPrincipal,
+    GroupPrincipal,
+    Permission,
+    Principal,
+    PrincipalType,
+    UnknownPrincipal,
+    WorkspacePrincipal,
+)
+from .objects.misc import Control, Formula  # noqa
 from .objects.mutation import Mutation, MutationGroup  # noqa
 from .objects.table import Cell, Column, Row, Table  # noqa
 from .values import (  # noqa

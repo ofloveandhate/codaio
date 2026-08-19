@@ -24,7 +24,7 @@ ALLOWED = {
     "err.py": set(),
     "http.py": {"codaio.err"},
     "values.py": {"codaio.err", "codaio.http"},
-    "_endpoints.py": {"codaio.http"},
+    "_endpoints.py": {"codaio.err", "codaio.http"},
 }
 
 

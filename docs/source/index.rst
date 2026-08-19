@@ -79,6 +79,36 @@ Writes
 .. autoclass:: codaio.MutationGroup
    :members:
 
+Sharing
+-------
+
+.. autoclass:: codaio.Permission
+   :members:
+
+.. autoclass:: codaio.Principal
+   :members:
+
+.. autoclass:: codaio.AccessType
+   :members:
+
+.. autoclass:: codaio.PrincipalType
+   :members:
+
+.. autoclass:: codaio.AclMetadata
+   :members:
+
+.. autoclass:: codaio.AclSettings
+   :members:
+
+Formulas and controls
+---------------------
+
+.. autoclass:: codaio.Formula
+   :members:
+
+.. autoclass:: codaio.Control
+   :members:
+
 Cell values
 -----------
 

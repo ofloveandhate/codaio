@@ -14,6 +14,14 @@ from dateutil.parser import parse
 from codaio import err
 from codaio.client import Coda
 from codaio.objects.base import CodaObject, Reference, WorkspaceReference, ref
+from codaio.objects.acl import (
+    AclMetadata,
+    AclSettings,
+    Permission,
+    Principal,
+    as_principal,
+)
+from codaio.objects.misc import Control, Formula
 from codaio.objects.mutation import Mutation
 from codaio.objects.page import Page, PageTree, _content_payload
 from codaio.objects.table import Table
@@ -275,6 +283,174 @@ class Document:
         return Mutation.from_response(
             self.coda, self.coda.create_page(self.id, data)
         )
+
+    # ------------------------------------------------------------------
+    # Formulas and controls
+    # ------------------------------------------------------------------
+
+    def list_formulas(self, offset: str = None, limit: int = None) -> List[Formula]:
+        """
+        The doc's named formulas.
+
+        .. code-block:: python
+
+            for formula in doc.list_formulas():
+                print(formula.name, formula.value)
+        """
+        return [
+            Formula.from_json(i, document=self)
+            for i in self.coda.list_formulas(self.id, offset=offset, limit=limit)["items"]
+        ]
+
+    def get_formula(self, formula_id_or_name: str) -> Formula:
+        """Fetch one named formula by id or name."""
+        return Formula.from_json(
+            self.coda.get_formula(self.id, formula_id_or_name), document=self
+        )
+
+    def list_controls(self, offset: str = None, limit: int = None) -> List[Control]:
+        """
+        The doc's controls -- sliders, selects, buttons and the like.
+
+        .. code-block:: python
+
+            for control in doc.list_controls():
+                print(control.name, control.control_type, control.value)
+        """
+        return [
+            Control.from_json(i, document=self)
+            for i in self.coda.list_controls(self.id, offset=offset, limit=limit)["items"]
+        ]
+
+    def get_control(self, control_id_or_name: str) -> Control:
+        """Fetch one control by id or name."""
+        return Control.from_json(
+            self.coda.get_control(self.id, control_id_or_name), document=self
+        )
+
+    # ------------------------------------------------------------------
+    # The doc itself
+    # ------------------------------------------------------------------
+
+    def update(self, *, title: str = None, icon_name: str = None) -> "Document":
+        """
+        Rename this doc or change its icon, and return it refreshed.
+
+        .. code-block:: python
+
+            doc.update(title="Q3 planning")
+        """
+        self.coda.update_doc(self.id, title=title, icon_name=icon_name)
+        self._absorb(self.coda.get(self.href + "/"))
+        return self
+
+    def delete(self) -> Dict:
+        """Delete this doc."""
+        return self.coda.delete_doc(self.id)
+
+    # ------------------------------------------------------------------
+    # Sharing
+    # ------------------------------------------------------------------
+
+    def acl_metadata(self) -> AclMetadata:
+        """
+        What this token may do about sharing the doc.
+
+        Worth reading first: a token can be able to read a doc without being
+        able to change who else can.
+
+        .. code-block:: python
+
+            if doc.acl_metadata().can_share:
+                doc.share("alice@example.com", access="readonly")
+        """
+        return AclMetadata.from_json(self.coda.get_acl_metadata(self.id))
+
+    def permissions(self, offset: str = None, limit: int = None) -> List[Permission]:
+        """
+        Who currently has access to this doc.
+
+        .. code-block:: python
+
+            for permission in doc.permissions():
+                print(permission.access, permission.principal)
+        """
+        return [
+            Permission.from_json(i)
+            for i in self.coda.list_permissions(
+                self.id, offset=offset, limit=limit
+            )["items"]
+        ]
+
+    def share(self, principal, *, access: str, suppress_email: bool = None) -> Dict:
+        """
+        Grant access to this doc.
+
+        `access` is keyword-only and has no default, deliberately. This is the
+        one call in the library where a defaulting mistake gives somebody access
+        they should not have, so it has to be said out loud.
+
+        :param principal: an email address, or a :class:`codaio.Principal` for
+            anything else -- a group, a domain, a workspace, or the public.
+
+        :param access: "readonly", "write" or "comment".
+
+        :param suppress_email: do not notify the recipient. Note that without it
+            codaio will not retry an inconclusive request, since a replay would
+            send a second invitation.
+
+        .. code-block:: python
+
+            doc.share("alice@example.com", access="readonly")
+            doc.share(Principal.domain("example.com"), access="comment")
+
+        Sharing with everyone means what it says -- anyone with the link:
+
+        .. code-block:: python
+
+            doc.share(Principal.anyone(), access="readonly")
+        """
+        return self.coda.add_permission(
+            self.id,
+            access=access,
+            principal=as_principal(principal).to_json(),
+            suppress_email=suppress_email,
+        )
+
+    def unshare(self, permission) -> Dict:
+        """
+        Revoke one grant of access.
+
+        :param permission: a `Permission` or its id.
+
+        .. code-block:: python
+
+            for permission in doc.permissions():
+                if permission.access == "write":
+                    doc.unshare(permission)
+        """
+        permission_id = getattr(permission, "id", permission)
+        return self.coda.delete_permission(self.id, permission_id)
+
+    def search_principals(self, query: str = None) -> List[Principal]:
+        """Find people and groups this doc could be shared with."""
+        found = self.coda.search_principals(self.id, query=query)
+        return [Principal.from_json(i) for i in found.get("items", [])]
+
+    def acl_settings(self) -> AclSettings:
+        """This doc's sharing settings, as opposed to its individual permissions."""
+        return AclSettings.from_json(self.coda.get_acl_settings(self.id))
+
+    def update_acl_settings(self, **settings) -> AclSettings:
+        """
+        Change this doc's sharing settings, and return them refreshed.
+
+        .. code-block:: python
+
+            doc.update_acl_settings(allow_copying=False)
+        """
+        self.coda.update_acl_settings(self.id, **settings)
+        return self.acl_settings()
 
     def list_sections(self, offset: str = None, limit: int = None) -> List[Page]:
         """Deprecated. Use :meth:`list_pages`."""

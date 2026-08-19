@@ -27,6 +27,7 @@ from typing import Dict, Tuple
 
 import attr
 
+from codaio import err
 from codaio.http import Idempotency
 
 _PLACEHOLDER = re.compile(r"\{[^}]+\}")
@@ -77,6 +78,40 @@ VALUE_FORMATS = frozenset({"simple", "simpleWithArrays", "rich"})
 #: Orders `GET /rows` accepts. `natural` is the order shown in the app, which
 #: only applies to visible rows, so it implies visibleOnly.
 ROW_SORT_ORDERS = frozenset({"createdAt", "updatedAt", "natural"})
+
+#: Access levels a permission can be *read* as.
+ACCESS_TYPES = ("comment", "none", "readonly", "write")
+
+#: Access levels that can be *granted*. `none` is deliberately absent: the API's
+#: add-permission body excludes it, and taking access away is a delete rather
+#: than a grant of nothing.
+GRANTABLE_ACCESS_TYPES = ("comment", "readonly", "write")
+
+
+def check_grantable(access: str) -> str:
+    """
+    Refuse an access level that cannot be granted.
+
+    Lives here rather than with the ACL objects so the client can use it without
+    reaching up into the object model.
+
+    >>> check_grantable("readonly")
+    'readonly'
+    >>> check_grantable("none")
+    Traceback (most recent call last):
+        ...
+    codaio.err.InvalidQuery: access='none' cannot be granted...
+    """
+    if access == "none":
+        raise err.InvalidQuery(
+            "access='none' cannot be granted; it is a level permissions are read "
+            "as. To take access away, delete the permission instead."
+        )
+    if access not in GRANTABLE_ACCESS_TYPES:
+        raise err.InvalidQuery(
+            f"access must be one of {list(GRANTABLE_ACCESS_TYPES)}, got {access!r}"
+        )
+    return access
 
 #: Every id the API mints carries a type prefix. Used to tell an id from a name,
 #: which matters because addressing by name selects an arbitrary match among
@@ -179,6 +214,11 @@ ENDPOINTS: Dict[str, Endpoint] = {
         idempotency=Idempotency.UNSAFE, success=(201,),
     ),
     "get_doc": Endpoint("GET", "/docs/{docId}", args=("doc_id",)),
+    # 200, not 202: applied by the time it returns.
+    "update_doc": Endpoint(
+        "PATCH", "/docs/{docId}", args=("doc_id",),
+        idempotency=Idempotency.IDEMPOTENT,
+    ),
     "delete_doc": Endpoint(
         "DELETE", "/docs/{docId}", args=("doc_id",),
         idempotency=Idempotency.IDEMPOTENT,
@@ -352,6 +392,36 @@ ENDPOINTS: Dict[str, Endpoint] = {
     "get_control": Endpoint(
         "GET", "/docs/{docId}/controls/{controlIdOrName}",
         args=("doc_id", "control_id_or_name"),
+    ),
+
+    # -- Sharing -----------------------------------------------------------
+    "get_acl_metadata": Endpoint(
+        "GET", "/docs/{docId}/acl/metadata", args=("doc_id",),
+    ),
+    "list_permissions": Endpoint(
+        "GET", "/docs/{docId}/acl/permissions", args=("doc_id",), params=_PAGING,
+    ),
+    # Idempotency is computed per call: without suppressEmail a replay sends a
+    # second invitation, which is a visible act rather than a repeated one.
+    "add_permission": Endpoint(
+        "POST", "/docs/{docId}/acl/permissions", args=("doc_id",),
+        idempotency=Idempotency.UNSAFE,
+    ),
+    "delete_permission": Endpoint(
+        "DELETE", "/docs/{docId}/acl/permissions/{permissionId}",
+        args=("doc_id", "permission_id"),
+        idempotency=Idempotency.IDEMPOTENT,
+    ),
+    "search_principals": Endpoint(
+        "GET", "/docs/{docId}/acl/principals/search", args=("doc_id",),
+        params=("query",),
+    ),
+    "get_acl_settings": Endpoint(
+        "GET", "/docs/{docId}/acl/settings", args=("doc_id",),
+    ),
+    "update_acl_settings": Endpoint(
+        "PATCH", "/docs/{docId}/acl/settings", args=("doc_id",),
+        idempotency=Idempotency.IDEMPOTENT,
     ),
 
     # -- Miscellaneous -----------------------------------------------------

@@ -20,6 +20,21 @@ from codaio.objects.page import (  # noqa
     PageTree,
     SyncPageContent,
 )
+from codaio.objects.acl import (  # noqa: F401
+    AccessType,
+    AclMetadata,
+    AclSettings,
+    AnyonePrincipal,
+    DomainPrincipal,
+    EmailPrincipal,
+    GroupPrincipal,
+    Permission,
+    Principal,
+    PrincipalType,
+    UnknownPrincipal,
+    WorkspacePrincipal,
+)
+from codaio.objects.misc import Control, Formula  # noqa: F401
 from codaio.objects.mutation import Mutation, MutationGroup  # noqa: F401
 from codaio.objects.table import Cell, Column, Row, Table  # noqa: F401
 
