@@ -25,6 +25,21 @@ import attr
 
 from codaio import err
 
+#: How long to wait for a write before giving up, by default.
+#:
+#: Deliberately far higher than the API's own claim. Coda documents edits as
+#: "generally processed within several seconds"; measured against a real doc, a
+#: row update reported `completed` after **41 seconds** and creating a page after
+#: about **60**. A minute-long default therefore times out on ordinary, healthy
+#: writes -- which is worse than useless, because the edit was fine and the error
+#: says otherwise.
+#:
+#: Three minutes is not a prediction that writes take three minutes. It is the
+#: point past which something is actually wrong rather than merely slow, and
+#: nothing waits this long in practice unless it has to: polling stops the moment
+#: the API says the edit is done.
+MUTATION_TIMEOUT = 180.0
+
 if TYPE_CHECKING:  # pragma: no cover
     from codaio.client import Coda
 
@@ -100,15 +115,21 @@ class Mutation:
     def wait(
         self,
         *,
-        timeout: float = 60.0,
-        interval: float = 0.5,
+        timeout: float = MUTATION_TIMEOUT,
+        interval: float = 1.0,
         multiplier: float = 1.5,
-        max_interval: float = 5.0,
+        max_interval: float = 10.0,
         sleep=time.sleep,
         clock=time.monotonic,
     ) -> "Mutation":
         """
         Block until the API reports the edit dealt with.
+
+        **Expect this to take the better part of a minute.** A single write is
+        slow to be applied -- see :data:`MUTATION_TIMEOUT` for the measurements --
+        so waiting on writes one at a time is the difference between a script
+        that runs in seconds and one that runs in hours. For more than one write,
+        issue them all and wait once with a :class:`MutationGroup`.
 
         Raises :class:`codaio.err.MutationTimeout` rather than looping forever.
         The timeout is not proof the edit failed -- it is almost always still
@@ -152,19 +173,83 @@ class Mutation:
 @attr.s(auto_attribs=True, repr=False)
 class MutationGroup:
     """
-    Several writes made together, so a bulk call can be waited on as one thing.
+    Several writes, waited on together.
 
-    A bulk delete is chunked into several requests, and each of those is its own
-    mutation with its own id.
+    This is how a batch of edits stays quick. Writes are applied concurrently by
+    the API, so issuing all of them and then waiting once costs about as long as
+    the slowest single write -- while waiting after each one costs their sum, and
+    at roughly a minute apiece that is the difference between a minute and an
+    afternoon.
+
+    .. code-block:: python
+
+        writes = MutationGroup()
+        for row in table.iter_rows():
+            writes.add(row["Done"].set(True))     # no waiting
+        writes.wait()                             # once, for all of them
+
+    Returned directly by the operations that are already several requests, such
+    as a chunked :meth:`codaio.Table.delete_rows`.
     """
 
     mutations: List[Mutation] = attr.ib(factory=list)
 
-    def wait(self, **kwargs) -> "MutationGroup":
-        """Wait for every mutation in turn."""
-        for mutation in self.mutations:
-            mutation.wait(**kwargs)
+    def add(self, mutation: "Mutation") -> "Mutation":
+        """Put a write in the group and hand it straight back."""
+        if mutation is not None:
+            self.mutations.append(mutation)
+        return mutation
+
+    def extend(self, mutations: Iterable["Mutation"]) -> "MutationGroup":
+        """Put several writes in the group."""
+        self.mutations.extend(m for m in mutations if m is not None)
         return self
+
+    def wait(
+        self,
+        *,
+        timeout: float = MUTATION_TIMEOUT,
+        interval: float = 1.0,
+        multiplier: float = 1.5,
+        max_interval: float = 10.0,
+        sleep=time.sleep,
+        clock=time.monotonic,
+    ) -> "MutationGroup":
+        """
+        Wait for every write in the group, against one shared deadline.
+
+        The deadline is shared rather than per-write on purpose. Waiting on each
+        in turn with its own timeout would let one slow write consume the whole
+        budget before the others were even asked about -- and since they are all
+        already in flight, the second is usually finished by the time the first
+        is.
+
+        Raises :class:`codaio.err.MutationTimeout` naming everything still
+        outstanding, so a caller can poll those ids again rather than starting
+        over.
+        """
+        deadline = clock() + timeout
+        wait_for = interval
+
+        while True:
+            pending = [m for m in self.mutations if not m.completed and m.request_id]
+            if not pending:
+                return self
+            for mutation in pending:
+                mutation.refresh()
+            if all(m.completed for m in pending):
+                return self
+            if clock() >= deadline:
+                outstanding = [m.request_id for m in self.mutations if not m.completed]
+                raise err.MutationTimeout(
+                    f"{len(outstanding)} of {len(self.mutations)} writes had not "
+                    f"completed after {timeout:g}s: {outstanding}. They are most "
+                    f"likely still queued rather than lost; poll again with those "
+                    f"request ids.",
+                    request_id=outstanding[0] if outstanding else None,
+                )
+            sleep(wait_for)
+            wait_for = min(wait_for * multiplier, max_interval)
 
     def refresh(self) -> "MutationGroup":
         """Ask about every mutation once."""

@@ -20,7 +20,7 @@ from codaio.objects.base import (
     column_format,
     ref,
 )
-from codaio.objects.mutation import Mutation, MutationGroup
+from codaio.objects.mutation import MUTATION_TIMEOUT, Mutation, MutationGroup
 from codaio.values import parse_value, serialize, unwrap_rich_text
 
 
@@ -841,48 +841,52 @@ class Cell:
 
     @value.setter
     def value(self, value):
+        """
+        Write this cell, without waiting for the API to apply it.
+
+        Assignment is the convenient form and cannot return anything, so there is
+        nothing to wait on: use :meth:`set` when you need that. The local object
+        is updated optimistically, so reading the cell back shows what you wrote
+        rather than what Coda stored -- and those differ, because values are
+        coerced to the column's format. Call `row.refresh()` to see the truth.
+        """
         self.set(value)
 
-    def set(self, value, *, wait: bool = True, timeout: float = 60.0) -> Mutation:
+    def set(self, value, *, wait: bool = False, timeout: float = MUTATION_TIMEOUT):
         """
-        Write this cell.
+        Write this cell, and return the :class:`~codaio.Mutation` for the write.
 
-        With `wait=True` this blocks until the API reports the edit dealt with
-        and then re-reads the row, so `.value` afterwards is what Coda actually
-        stored -- which may differ from what you wrote, because values are
-        coerced to the column's format ("$12.34" becomes 12.34, dates are
-        reformatted, a select option is normalised).
-
-        That difference is why this no longer waits by comparing the two. The
-        old loop re-read the row until it matched what was sent, with no bound at
-        all, so any coerced value spun forever. `mutationStatus` answers the
-        question that was actually being asked.
-
-        :param wait: set False for bulk work and wait on the returned `Mutation`
-            yourself, or not at all.
+        Does **not** wait by default. A single write takes the better part of a
+        minute to be applied -- measured at around 40 seconds for a row update --
+        so waiting here would make editing a column of rows take hours. Issue the
+        writes, collect the mutations, and wait once:
 
         .. code-block:: python
 
-            row["Cost"] = "1.40"                  # waits, then re-reads
-            cell = row["Cost"]
-            print(cell.value)                     # 1.4 -- Coda coerced it
+            writes = MutationGroup()
+            for row in table.iter_rows():
+                writes.add(row["Done"].set(True))
+            writes.wait()
 
-        For many writes, fire them and wait once:
+        With `wait=True` this blocks and then re-reads the row, so `.value`
+        afterwards is what Coda actually stored. Worth doing for a single edit
+        you care about, and worth avoiding in a loop.
 
-        .. code-block:: python
+        Waiting is on `mutationStatus`, not on the value read back matching what
+        was sent. The old implementation did the latter, unbounded -- and since
+        Coda coerces "$12.34" to 12.34, reformats dates and normalises select
+        options, that moment often never came.
 
-            writes = [row["Done"].set(True, wait=False) for row in rows]
-            for write in writes:
-                write.wait()
+        :param wait: block until the API reports the edit applied, then refresh.
         """
         mutation = self.row.table.update_row(self.row, [Cell(self.column, value)])
+        column_id = self.column.id if isinstance(self.column, Column) else self.column
+
         if wait:
             mutation.wait(timeout=timeout)
             self.row.refresh()
-            column_id = (
-                self.column.id if isinstance(self.column, Column) else self.column
-            )
             self.value_storage = dict(self.row.values).get(column_id)
         else:
+            # Optimistic: show what was written until somebody refreshes.
             self.value_storage = serialize(value)
         return mutation

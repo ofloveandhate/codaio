@@ -25,17 +25,28 @@ def writable_table(mock_json_responses, mock_json_response, main_table):
 
 
 class TestCell:
-    def test_set_value(self, writable_table):
+    def test_assignment_writes_and_shows_what_was_written(self, writable_table):
         cell_a = writable_table.rows()[0].cells()[0]
         assert isinstance(cell_a, Cell)
 
         cell_a.value = "completely_new_value"
 
         assert cell_a.value == "completely_new_value"
-        fetched_again = writable_table.rows()[0].cells()[0]
-        assert fetched_again.value == "completely_new_value"
 
-    def test_a_write_waits_for_the_api_to_report_it_done(
+    def test_a_write_does_not_wait_by_default(self, writable_table, mocked_responses):
+        """
+        A single write takes the better part of a minute to be applied, so
+        waiting here would make editing a column of rows take hours. Callers
+        batch instead: issue the writes, then wait once.
+        """
+        writable_table.rows()[0].cells()[0].value = "x"
+
+        assert not any(
+            call.request.url.startswith(MUTATION_URL)
+            for call in mocked_responses.calls
+        )
+
+    def test_waiting_is_available_and_re_reads_the_row(
         self, writable_table, mocked_responses
     ):
         """
@@ -45,21 +56,12 @@ class TestCell:
         with no bound at all -- so any value Coda coerced ("$12.34" to 12.34, a
         reformatted date, a normalised select option) meant spinning forever.
         """
-        writable_table.rows()[0].cells()[0].value = "x"
-
-        assert any(
-            call.request.url.startswith(MUTATION_URL)
-            for call in mocked_responses.calls
-        )
-
-    def test_a_write_can_skip_waiting(self, writable_table, mocked_responses):
-        """Bulk work wants to fire the writes and wait once, or not at all."""
         cell = writable_table.rows()[0].cells()[0]
 
-        mutation = cell.set("x", wait=False)
+        mutation = cell.set("x", wait=True)
 
-        assert mutation.request_id == "request_id"
-        assert not any(
+        assert mutation.completed
+        assert any(
             call.request.url.startswith(MUTATION_URL)
             for call in mocked_responses.calls
         )

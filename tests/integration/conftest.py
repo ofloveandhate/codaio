@@ -165,6 +165,8 @@ def scratch_page(live_doc):
 
     Created once per session and left behind, like everything else here.
     """
+    # Waits, unlike most writes here: everything else in the session hangs off
+    # this page, so it has to exist before they run.
     mutation = live_doc.create_page("codaio integration scratch")
     mutation.wait()
     page_id = mutation.id

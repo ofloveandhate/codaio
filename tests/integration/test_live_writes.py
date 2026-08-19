@@ -9,7 +9,15 @@ gets cluttered.
 The rule that makes that work: assert on what this run created, by the id the
 create call returned. Never by name, never by count, never by asserting a
 listing is exhaustive -- those pass once and then fail on every later run.
+
+The other thing shaping this file is how slow a write is to be *applied*. Coda
+accepts one in well under a second and reports it complete around forty seconds
+later, so waiting after every write turns this suite into a coffee break. The
+session-scoped `pending` fixture collects writes and waits on them once; only
+the tests that must read something back immediately wait on their own.
 """
+
+import time
 
 import pytest
 
@@ -18,8 +26,38 @@ from codaio import Cell, err
 pytestmark = pytest.mark.integration
 
 
+@pytest.fixture(scope="session")
+def pending():
+    """
+    Writes made by this session, waited on once at the end.
+
+    Writes are applied concurrently, so waiting on the lot costs about as long
+    as the slowest -- rather than the sum, which at roughly a minute apiece is
+    the difference between a minute and an afternoon.
+    """
+    from codaio import MutationGroup
+
+    group = MutationGroup()
+    yield group
+    if group.mutations:
+        print(f"\nwaiting once for {len(group)} writes...")
+        started = time.monotonic()
+        try:
+            group.wait()
+        except err.MutationTimeout as exc:
+            print(f"  not all applied: {exc}")
+        else:
+            print(f"  all applied after {time.monotonic()-started:.0f}s")
+        for warning in group.warnings:
+            print(f"  warning from the API: {warning}")
+
+
 class TestPageWrites:
     def test_create_a_page_and_read_it_back(self, live_doc, scratch_page):
+        """
+        Waits on its own, because it reads the page back immediately. Most tests
+        here should not: see the `pending` fixture.
+        """
         written = live_doc.create_page(
             "codaio: created by a test",
             parent_page=scratch_page,
@@ -117,20 +155,20 @@ class TestPageExport:
 
 
 class TestRowWrites:
-    def test_upsert_a_row_and_wait_for_it(self, a_table):
+    def test_upsert_a_row(self, a_table, pending):
         columns = a_table.columns()
         writable = [c for c in columns if not c.calculated]
         if not writable:
             pytest.skip("no writable columns in this table")
 
         target = writable[0]
-        written = a_table.upsert_row([Cell(target, "codaio integration test")])
-        written.wait()
+        written = pending.add(
+            a_table.upsert_row([Cell(target, "codaio integration test")])
+        )
 
         assert written.request_id
+        assert not written.completed, "a 202 has not been applied yet"
         print(f"\nupsert reported added rows: {written.row_ids}")
-        if written.warning:
-            print(f"warning from the API: {written.warning}")
 
     #: A plausible value per column type, so the write is accepted and the
     #: interesting part is what Coda does to it rather than whether it errors.
@@ -148,7 +186,7 @@ class TestRowWrites:
         "scale": 3,
     }
 
-    def test_what_coda_stores_is_not_always_what_was_written(self, a_table):
+    def test_what_coda_stores_is_not_always_what_was_written(self, a_table, pending):
         """
         The reason the old polling loop could never finish.
 
@@ -181,15 +219,23 @@ class TestRowWrites:
             sent = self.SAMPLES[column.format.type]
             cell = row[column.id]
             try:
-                cell.set(sent)
+                pending.add(cell.set(sent))
             except Exception as exc:  # reporting, not asserting
                 print(f"    {column.name!r:24} ({column.format.type:9}) "
                       f"sent {sent!r} -> {type(exc).__name__}: {exc}")
                 continue
-            stored = cell.raw_value
+            print(f"    {column.name!r:24} ({column.format.type:9}) sent {sent!r}")
+
+        # One wait for all of them, then one read to see what was stored.
+        pending.wait()
+        fresh = dict(a_table.get_row_by_id(row.id).values)
+        print("  what Coda stored:")
+        for column in candidates[:6]:
+            sent = self.SAMPLES[column.format.type]
+            stored = fresh.get(column.id)
             changed = "  <-- coerced" if stored != sent else ""
             print(f"    {column.name!r:24} ({column.format.type:9}) "
-                  f"sent {sent!r} -> stored {stored!r}{changed}")
+                  f"stored {stored!r}{changed}")
 
     def test_an_unknown_column_raises_rather_than_reaching_the_api(self, a_table):
         with pytest.raises(err.ColumnNotFound):
@@ -197,11 +243,31 @@ class TestRowWrites:
 
 
 class TestMutationStatus:
-    def test_a_write_reports_completion(self, live_doc, scratch_page):
-        written = live_doc.create_page(
-            "codaio: mutation status", parent_page=scratch_page
+    def test_a_write_is_accepted_before_it_is_applied(self, live_doc, scratch_page,
+                                                      pending):
+        """
+        The distinction the whole Mutation type exists for: 202 means queued.
+        """
+        written = pending.add(
+            live_doc.create_page("codaio: mutation status", parent_page=scratch_page)
         )
 
-        assert not written.completed, "a 202 has not been applied yet"
+        assert written.request_id
+        assert not written.completed
+
+    def test_how_long_a_write_actually_takes(self, live_doc, scratch_page):
+        """
+        Reported, because it is the number that decides how this library should
+        be used -- and it is nothing like the "several seconds" the docs claim.
+        """
+        started = time.monotonic()
+        written = live_doc.create_page(
+            "codaio: timing", parent_page=scratch_page
+        )
+        accepted = time.monotonic() - started
+
         written.wait()
+        applied = time.monotonic() - started
+
+        print(f"\n  accepted after {accepted:.1f}s, applied after {applied:.0f}s")
         assert written.completed

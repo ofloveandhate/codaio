@@ -104,6 +104,86 @@ class TestWaiting:
         assert mutation.warning == "Initial page HTML was invalid."
 
 
+class TestBatching:
+    """
+    The property that makes a batch of edits quick.
+
+    A write takes the better part of a minute to be applied, but writes are
+    applied concurrently -- so issuing them all and waiting once costs about as
+    long as the slowest, while waiting after each costs their sum.
+    """
+
+    def test_a_group_waits_against_one_shared_deadline(self, coda, mocked_responses,
+                                                       fake_clock):
+        """
+        Not a fresh timeout each. Otherwise one slow write could consume the
+        whole budget before the others were even asked about, even though they
+        were already in flight and probably finished.
+        """
+        for request_id in ("r1", "r2", "r3"):
+            mocked_responses.add("GET", STATUS + request_id, json={"completed": False})
+            mocked_responses.add("GET", STATUS + request_id, json={"completed": True})
+
+        group = MutationGroup()
+        for request_id in ("r1", "r2", "r3"):
+            group.add(Mutation.from_response(coda, {"requestId": request_id}))
+
+        group.wait(sleep=fake_clock.sleep, clock=fake_clock)
+
+        assert group.completed
+        # one sleep for the whole group, not one per write
+        assert len(fake_clock.sleeps) == 1
+
+    def test_a_group_that_never_finishes_names_what_is_outstanding(
+        self, coda, mocked_responses, fake_clock
+    ):
+        mocked_responses.add("GET", STATUS + "r1", json={"completed": True})
+        mocked_responses.add("GET", STATUS + "r2", json={"completed": False})
+
+        group = MutationGroup()
+        group.add(Mutation.from_response(coda, {"requestId": "r1"}))
+        group.add(Mutation.from_response(coda, {"requestId": "r2"}))
+
+        with pytest.raises(err.MutationTimeout) as caught:
+            group.wait(timeout=5, sleep=fake_clock.sleep, clock=fake_clock)
+
+        message = str(caught.value)
+        assert "r2" in message
+        assert "1 of 2" in message
+
+    def test_an_already_finished_group_costs_nothing(self, coda, fake_clock,
+                                                     mocked_responses):
+        before = len(mocked_responses.calls)
+        group = MutationGroup()
+        group.add(Mutation.from_response(coda, {"id": "already done"}))
+
+        group.wait(sleep=fake_clock.sleep, clock=fake_clock)
+
+        assert len(mocked_responses.calls) == before
+        assert fake_clock.sleeps == []
+
+    def test_add_hands_the_mutation_straight_back(self, coda):
+        """So a write can be collected and used in one expression."""
+        group = MutationGroup()
+        mutation = group.add(Mutation.from_response(coda, {"requestId": "r1"}))
+
+        assert mutation.request_id == "r1"
+        assert len(group) == 1
+
+    def test_the_default_timeout_allows_for_how_slow_writes_actually_are(self):
+        """
+        Measured against a real doc: a row update reported completed after 41
+        seconds and a page create after about 60. A one-minute default therefore
+        timed out on ordinary healthy writes, which is worse than useless.
+        """
+        from codaio.objects.mutation import MUTATION_TIMEOUT
+
+        assert MUTATION_TIMEOUT >= 120, (
+            "the default must leave room for writes that legitimately take a "
+            "minute; see the measurements beside MUTATION_TIMEOUT"
+        )
+
+
 class TestBulkDelete:
     def test_deletes_in_one_request_when_it_fits(self, table, mocked_responses):
         result = table.delete_rows(["i-1", "i-2", "i-3"])
