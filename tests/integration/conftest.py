@@ -17,6 +17,10 @@ Coda UI when it gets cluttered and point `CODAIO_TEST_DOC` at the copy.
 **So tests must tolerate leftovers.** Assert on what this run created, by the id
 the create call returned. Never look something up by name, never assert a count,
 never assert a listing is exhaustive. A test that counts pages passes once.
+
+Note what a doc-scoped token cannot do, since it is more than write access:
+`GET /docs` answers 403, so such a token cannot enumerate docs and the doc id
+has to be configured rather than discovered.
 """
 
 import os

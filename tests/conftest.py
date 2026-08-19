@@ -22,7 +22,7 @@ CREDENTIAL_ENV_VARS = (
 
 
 @pytest.fixture(autouse=True)
-def isolate_credentials(monkeypatch):
+def isolate_credentials(monkeypatch, request):
     """
     Keep the suite away from real credentials.
 
@@ -31,7 +31,14 @@ def isolate_credentials(monkeypatch):
     ImportError, so the default posture is "no keyring installed" and
     reaching a real Secret Service is impossible rather than just unlikely.
     Tests that want a keyring opt in via the `fake_keyring` fixture.
+
+    The integration suite is the one exception: it exists to talk to a real doc
+    with a real token, so isolating it from both would leave it testing nothing.
+    It is opt-in and never runs by accident, which is what makes that safe.
     """
+    if request.node.get_closest_marker("integration"):
+        return
+
     for var in CREDENTIAL_ENV_VARS:
         monkeypatch.delenv(var, raising=False)
     for var in [v for v in os.environ if re.fullmatch(r"CODA_API_KEY_\w+", v)]:
