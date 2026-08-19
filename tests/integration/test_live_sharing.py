@@ -22,7 +22,21 @@ pytestmark = pytest.mark.integration
 
 
 class TestReadingWhoHasAccess:
+    """
+    All three skip when the token cannot see sharing, which a doc-scoped one
+    cannot: the ACL endpoints answer 401 for it, not 403. That is worth knowing
+    -- 401 usually means "your credentials are wrong" rather than "your
+    credentials are fine and insufficient", so a caller could easily read it as
+    a broken token.
+    """
+
     def test_metadata_says_what_this_token_may_do(self, live_doc, capabilities):
+        if not capabilities["acl_read"]:
+            pytest.skip(
+                "this token cannot read the doc's sharing metadata -- see the "
+                "capability report; a doc-scoped token answers 401 here"
+            )
+
         metadata = live_doc.acl_metadata()
 
         print(f"\ncan_share={metadata.can_share} can_copy={metadata.can_copy}")

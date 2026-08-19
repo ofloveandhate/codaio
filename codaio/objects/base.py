@@ -166,9 +166,11 @@ class ColumnFormat:
     own union has 24 type names but only 16 shapes, and six of those names
     (`text`, `canvas`, `image`, `attachments`, `packObject`, `other`) share the
     same near-empty one -- while `email`, `link` and `reaction` appear in the
-    enum without being in the discriminator mapping at all, so a strict client
-    would fail to build anything for them. `type` plus the untouched payload
-    answers every question worth asking without inheriting that mess.
+    enum without being in the discriminator mapping at all, so a client built
+    strictly from the spec has nothing to construct for them. That is not
+    hypothetical: an ordinary table with a link column in it hits exactly that
+    case. `type` plus the untouched payload answers every question worth asking
+    without inheriting the mess.
     """
 
     type: str = None

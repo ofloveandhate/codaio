@@ -227,19 +227,35 @@ class TestLosslessness:
                 "several options selected exercises this"
             )
 
+        # Prefer a cell that actually demonstrates the loss: one whose values
+        # contain a comma or padding. A cell of tidy values happens to survive
+        # the round trip, which says nothing about the format being safe.
+        def ambiguous(values):
+            return any(
+                isinstance(v, str) and ("," in v or v != v.strip()) for v in values
+            )
+
+        multi.sort(key=lambda entry: not ambiguous(entry[2]))
         row_id, column, real = multi[0]
         joined = plain[row_id][column]
+
         print(f"\n  simpleWithArrays: {real!r}")
         print(f"  simple:           {joined!r}")
 
         assert isinstance(joined, str), "simple should have flattened this"
 
-        # The interesting part: can the original be recovered from the string?
         recovered = joined.split(",")
         faithful = recovered == [str(v) for v in real]
-        print(f"  splitting on ',' recovers the original: {faithful}")
+        print(f"  splitting on ',' gives {len(recovered)} values, "
+              f"the cell has {len(real)}")
+        print(f"  recovers the original: {faithful}")
+
         if not faithful:
-            print("  -- so reading with `simple` is lossy for this cell")
+            print("  -- `simple` cannot represent this cell; the separator and "
+                  "the content are the same character")
+        else:
+            print("  -- this particular cell happens to survive, which is luck "
+                  "rather than a property of the format")
 
     def test_values_with_commas_or_padding_cannot_survive_the_simple_format(
         self, a_table
