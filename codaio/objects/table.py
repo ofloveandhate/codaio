@@ -873,9 +873,24 @@ class Cell:
         you care about, and worth avoiding in a loop.
 
         Waiting is on `mutationStatus`, not on the value read back matching what
-        was sent. The old implementation did the latter, unbounded -- and since
-        Coda coerces "$12.34" to 12.34, reformats dates and normalises select
-        options, that moment often never came.
+        was sent. The old implementation did the latter, unbounded -- and it
+        could not have worked, because Coda rewrites what you send. Observed
+        against a real doc:
+
+        =============  =========================  ==================================
+        column type    sent                       stored
+        =============  =========================  ==================================
+        ``date``       ``"2026-01-15"``           ``"2026-01-15T00:00:00.000+01:00"``
+        ``dateTime``   ``"2026-01-15T09:30:00"``  ``"2026-01-15T09:30:00.000+01:00"``
+        ``duration``   ``"90 minutes"``           ``"1 hr 30 mins"``
+        ``currency``   ``"12.34"``                ``"12.34\xa0€"``
+        ``text``       ``"a string"``             ``"a string"``
+        =============  =========================  ==================================
+
+        Note the currency value: a formatted string with a **non-breaking space**
+        before the symbol, which is not something to parse by hand. Read with
+        ``value_format="rich"`` to get a :class:`~codaio.values.MoneyValue` with a
+        ``Decimal`` amount instead.
 
         :param wait: block until the API reports the edit applied, then refresh.
         """
