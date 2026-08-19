@@ -132,28 +132,64 @@ class TestRowWrites:
         if written.warning:
             print(f"warning from the API: {written.warning}")
 
-    def test_a_write_is_coerced_and_the_cell_reports_what_was_stored(self, a_table):
+    #: A plausible value per column type, so the write is accepted and the
+    #: interesting part is what Coda does to it rather than whether it errors.
+    SAMPLES = {
+        "text": "codaio round trip",
+        "currency": "12.34",
+        "number": "42",
+        "percent": "0.5",
+        "date": "2026-01-15",
+        "dateTime": "2026-01-15T09:30:00",
+        "time": "09:30",
+        "duration": "90 minutes",
+        "checkbox": True,
+        "slider": 3,
+        "scale": 3,
+    }
+
+    def test_what_coda_stores_is_not_always_what_was_written(self, a_table):
         """
         The reason the old polling loop could never finish.
 
-        It waited for the value read back to equal the value written, but Coda
-        coerces to the column's format, so for many columns that never happened.
+        It re-read the row until the value equalled what was sent, unbounded. But
+        values are coerced to the column's format, so for many columns that
+        moment never arrived: "12.34" comes back as a number, a date is
+        reformatted, a duration is normalised. Waiting on `mutationStatus`
+        answers the question that was actually being asked.
+
+        Reports rather than asserts, because what coercion happens is Coda's
+        business and differs per column.
         """
         rows = a_table.rows(limit=1)
         if not rows:
             pytest.skip("no rows to edit")
-        writable = [c for c in a_table.columns() if not c.calculated]
-        if not writable:
-            pytest.skip("no writable columns")
 
-        row, column = rows[0], writable[0]
-        cell = row[column.id]
-        before = cell.raw_value
+        candidates = [
+            column for column in a_table.columns()
+            if not column.calculated and column.format.type in self.SAMPLES
+        ]
+        if not candidates:
+            pytest.skip("no writable columns of a type this test knows how to fill")
 
-        cell.set("codaio round trip")
+        # Types that coerce are the interesting ones; text is the dull case.
+        candidates.sort(key=lambda column: column.format.type == "text")
 
-        print(f"\n{column.name} ({column.format.type}): wrote 'codaio round trip', "
-              f"stored {cell.raw_value!r} (was {before!r})")
+        row = rows[0]
+        print("\n  what Coda stored, per column type:")
+        for column in candidates[:6]:
+            sent = self.SAMPLES[column.format.type]
+            cell = row[column.id]
+            try:
+                cell.set(sent)
+            except Exception as exc:  # reporting, not asserting
+                print(f"    {column.name!r:24} ({column.format.type:9}) "
+                      f"sent {sent!r} -> {type(exc).__name__}: {exc}")
+                continue
+            stored = cell.raw_value
+            changed = "  <-- coerced" if stored != sent else ""
+            print(f"    {column.name!r:24} ({column.format.type:9}) "
+                  f"sent {sent!r} -> stored {stored!r}{changed}")
 
     def test_an_unknown_column_raises_rather_than_reaching_the_api(self, a_table):
         with pytest.raises(err.ColumnNotFound):
