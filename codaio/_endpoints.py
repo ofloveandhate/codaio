@@ -63,6 +63,14 @@ _PAGING = ("limit", "pageToken")
 #: Formats `POST /pages/{id}/export` accepts.
 PAGE_EXPORT_FORMATS = frozenset({"markdown", "html"})
 
+#: How much of a cell's value a read returns. `simple` is the API's default and
+#: is lossy: array values come back joined into a comma-delimited string.
+VALUE_FORMATS = frozenset({"simple", "simpleWithArrays", "rich"})
+
+#: Orders `GET /rows` accepts. `natural` is the order shown in the app, which
+#: only applies to visible rows, so it implies visibleOnly.
+ROW_SORT_ORDERS = frozenset({"createdAt", "updatedAt", "natural"})
+
 #: Every id the API mints carries a type prefix. Used to tell an id from a name,
 #: which matters because addressing by name selects an arbitrary match among
 #: things sharing that name -- so a write addressed by name can never be replayed.
@@ -261,6 +269,21 @@ ENDPOINTS: Dict[str, Endpoint] = {
         params=("disableParsing",),
         idempotency=Idempotency.IDEMPOTENT, success=(202,),
     ),
+    "delete_rows": Endpoint(
+        "DELETE", "/docs/{docId}/tables/{tableIdOrName}/rows",
+        args=("doc_id", "table_id_or_name"),
+        idempotency=Idempotency.IDEMPOTENT, success=(202,),
+    ),
+    # A button can do anything its author wrote into it -- write elsewhere, call
+    # a Pack action, send something -- so pressing it twice is never known to be
+    # harmless.
+    "push_button": Endpoint(
+        "POST",
+        "/docs/{docId}/tables/{tableIdOrName}/rows/{rowIdOrName}"
+        "/buttons/{columnIdOrName}",
+        args=("doc_id", "table_id_or_name", "row_id_or_name", "column_id_or_name"),
+        idempotency=Idempotency.UNSAFE, success=(202,),
+    ),
     "delete_row": Endpoint(
         "DELETE", "/docs/{docId}/tables/{tableIdOrName}/rows/{rowIdOrName}",
         args=("doc_id", "table_id_or_name", "row_id_or_name"),
@@ -285,6 +308,9 @@ ENDPOINTS: Dict[str, Endpoint] = {
 
     # -- Miscellaneous -----------------------------------------------------
     "account": Endpoint("GET", "/whoami"),
+    "get_mutation_status": Endpoint(
+        "GET", "/mutationStatus/{requestId}", args=("request_id",),
+    ),
     "resolve_browser_link": Endpoint(
         "GET", "/resolveBrowserLink", params=("url", "degradeGracefully"),
     ),

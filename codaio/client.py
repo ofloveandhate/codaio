@@ -13,6 +13,8 @@ import requests
 from codaio import credentials, err
 from codaio._endpoints import (
     ENDPOINTS,
+    ROW_SORT_ORDERS,
+    VALUE_FORMATS,
     PAGE_EXPORT_FORMATS,
     looks_like_page_id,
     page_update_idempotency,
@@ -784,8 +786,12 @@ class Coda:
 
         :return:
         """
+        # `tableTypes` belongs in the params, not glued onto the path: with it in
+        # both places a caller who passed their own would send it twice.
+        params = dict(data or {})
+        params.setdefault("tableTypes", "view")
         return self.get(
-            f"/docs/{doc_id}/tables?tableTypes=view", offset=offset, limit=limit, data=data
+            f"/docs/{doc_id}/tables", offset=offset, limit=limit, data=params
         )
 
     def get_view(self, doc_id: str, view_id_or_name: str) -> Dict:
@@ -859,14 +865,16 @@ class Coda:
         query: str = None,
         use_column_names: bool = False,
         limit: int = None,
-        offset: int = None,
+        offset: str = None,
         sync_token: str = None,
-        data: Dict = None
+        data: Dict = None,
+        *,
+        value_format: str = None,
+        sort_by: str = None,
+        visible_only: bool = None,
     ) -> Dict:
         """
         Returns a list of rows in a table.
-
-        Docs: https://coda.io/developers/apis/v1/#tag/Rows
 
         :param doc_id:  ID of the doc. Example: "AbCDeFGH"
 
@@ -884,6 +892,24 @@ class Coda:
             This is generally discouraged as it is fragile.
             If columns are renamed, code using original names may throw errors.
 
+        :param value_format: how much of a cell's value to return.
+
+            * `simple` -- the API's default, and lossy: **array values are joined
+              into a comma-delimited string**, which cannot be taken apart again
+              once any value contains a comma.
+            * `simpleWithArrays` -- the same, but arrays stay arrays.
+            * `rich` -- structured JSON-LD for images, people, links, currency and
+              row references, and Markdown for text. See :mod:`codaio.values`.
+
+        :param sort_by: `createdAt`, `updatedAt` or `natural`. Note `natural` is
+            the order shown in the app and only means anything for visible rows,
+            so it implies `visible_only=True`; asking for both `natural` and
+            `visible_only=False` is rejected here rather than by the API.
+
+        :param visible_only: return only the rows and columns visible in the
+            table. Note this narrows the *columns* too, so a row fetched this way
+            can legitimately carry fewer than `list_columns` reports.
+
         :param limit: Maximum number of results to return in this query.
 
         :param offset: An opaque token used to fetch the next page of results.
@@ -894,17 +920,38 @@ class Coda:
 
         :param: data: A dict of additional parameters to use in the get call.
         """
-
-        if data is None:
-            data = {"useColumnNames": use_column_names}
-        else:
-            data["useColumnNames"]  = use_column_names  
+        data = dict(data or {})
+        data["useColumnNames"] = use_column_names
 
         if query:
             data["query"] = query
-
         if sync_token:
-            data['syncToken'] = sync_token
+            data["syncToken"] = sync_token
+        if value_format is not None:
+            if value_format not in VALUE_FORMATS:
+                raise err.InvalidQuery(
+                    f"value_format must be one of {sorted(VALUE_FORMATS)}, "
+                    f"got {value_format!r}"
+                )
+            data["valueFormat"] = value_format
+        if sort_by is not None:
+            if sort_by not in ROW_SORT_ORDERS:
+                raise err.InvalidQuery(
+                    f"sort_by must be one of {sorted(ROW_SORT_ORDERS)}, "
+                    f"got {sort_by!r}"
+                )
+            data["sortBy"] = sort_by
+        if visible_only is not None:
+            data["visibleOnly"] = visible_only
+
+        # The API rejects this combination with a 400. Saying so here costs a
+        # round trip less and explains why, which the 400 does not.
+        if data.get("sortBy") == "natural" and data.get("visibleOnly") is False:
+            raise err.InvalidQuery(
+                "sort_by='natural' is the order shown in the app, which only "
+                "applies to visible rows, so it cannot be combined with "
+                "visible_only=False."
+            )
 
         return self.get(
             f"/docs/{doc_id}/tables/{table_id_or_name}/rows",
@@ -1025,6 +1072,80 @@ class Coda:
             f"/docs/{doc_id}/tables/{table_id_or_name}/rows/{row_id_or_name}",
             idempotency=ENDPOINTS["delete_row"].idempotency,
         )
+
+    def delete_rows(
+        self, doc_id: str, table_id_or_name: str, row_ids: Sequence[str]
+    ) -> Dict:
+        """
+        Deletes several rows in one request.
+
+        :param doc_id:  ID of the doc. Example: "AbCDeFGH"
+
+        :param table_id_or_name: ID or name of the table.
+
+        :param row_ids: the rows to delete. An empty sequence is refused rather
+            than sent, since a request to delete nothing is almost always a
+            filter that matched nothing rather than an intention.
+
+        :return:
+        """
+        row_ids = list(row_ids or ())
+        if not row_ids:
+            raise err.InvalidQuery(
+                "delete_rows was given no row ids. If a filter produced that "
+                "empty list, deleting nothing is unlikely to be what was meant."
+            )
+        return self.delete(
+            f"/docs/{doc_id}/tables/{table_id_or_name}/rows",
+            {"rowIds": row_ids},
+            idempotency=ENDPOINTS["delete_rows"].idempotency,
+        )
+
+    def push_button(
+        self,
+        doc_id: str,
+        table_id_or_name: str,
+        row_id_or_name: str,
+        column_id_or_name: str,
+    ) -> Dict:
+        """
+        Presses a button in a row, as a person clicking it would.
+
+        Never replayed automatically. A button can do anything the doc's author
+        wrote into it -- write to other tables, call a Pack action, send
+        something -- so codaio cannot know whether pressing it twice is harmless.
+
+        :param doc_id:  ID of the doc. Example: "AbCDeFGH"
+
+        :param table_id_or_name: ID or name of the table.
+
+        :param row_id_or_name: ID or name of the row.
+
+        :param column_id_or_name: ID or name of the button column.
+
+        :return:
+        """
+        return self.post(
+            f"/docs/{doc_id}/tables/{table_id_or_name}/rows/{row_id_or_name}"
+            f"/buttons/{column_id_or_name}",
+            None,
+            idempotency=ENDPOINTS["push_button"].idempotency,
+        )
+
+    def get_mutation_status(self, request_id: str) -> Dict:
+        """
+        Reports whether an accepted edit has been dealt with.
+
+        Note what it does *not* report: there is no failure field, only
+        `completed` and an optional `warning`. So `completed` means the API has
+        stopped working on the edit, not that it did what was asked. Status is
+        kept for about a day, so this is for checking a write you just made.
+
+        :param request_id: the `requestId` a mutating call returned.
+
+        :return:
+        """
+        return self.get(f"/mutationStatus/{request_id}")
 
     def list_formulas(self, doc_id: str, offset: int = None, limit: int = None) -> Dict:
         """

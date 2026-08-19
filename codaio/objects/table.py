@@ -6,8 +6,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
-import time
-from typing import Any, Dict, List, Tuple, Union
+from typing import Any, Dict, Iterable, Iterator, List, Tuple, Union
 
 import attr
 from dateutil.parser import parse
@@ -21,10 +20,8 @@ from codaio.objects.base import (
     column_format,
     ref,
 )
+from codaio.objects.mutation import Mutation, MutationGroup
 from codaio.values import parse_value, serialize, unwrap_rich_text
-
-#: How long `Cell.value = x` waits for a write to become readable.
-_WRITE_SETTLE_TIMEOUT = 60.0
 
 
 @attr.s(auto_attribs=True, eq=False, repr=False)
@@ -109,7 +106,60 @@ class Table(CodaObject):
             ]
         return self.columns_storage
 
-    def rows(self, offset: int = None, limit: int = None, data: Dict = None) -> List[Row]:
+    def iter_rows(
+        self,
+        *,
+        query: str = None,
+        value_format: str = None,
+        sort_by: str = None,
+        visible_only: bool = None,
+        use_column_names: bool = False,
+        sync_token: str = None,
+        page_size: int = None,
+        limit: int = None,
+        data: Dict = None,
+    ) -> Iterator[Row]:
+        """
+        Walk the table's rows, fetching a page at a time.
+
+        Unlike :meth:`rows` this does not hold the whole table in memory, which
+        matters once a table is larger than a convenient list.
+
+        :param limit: a cap on how many rows to yield in total, across however
+            many requests that takes.
+
+        :param page_size: how many rows to ask for per request.
+
+        See :meth:`codaio.Coda.list_rows` for the rest, including why
+        `value_format` is worth setting and what `visible_only` does to columns.
+        """
+        params = dict(data or {})
+        params["useColumnNames"] = use_column_names
+        for key, value in (
+            ("query", query), ("valueFormat", value_format),
+            ("sortBy", sort_by), ("visibleOnly", visible_only),
+            ("syncToken", sync_token),
+        ):
+            if value is not None:
+                params[key] = value
+
+        if params.get("sortBy") == "natural" and params.get("visibleOnly") is False:
+            raise err.InvalidQuery(
+                "sort_by='natural' is the order shown in the app, which only "
+                "applies to visible rows, so it cannot be combined with "
+                "visible_only=False."
+            )
+
+        doc = self.document
+        for item in doc.coda.iter_items(
+            f"/docs/{doc.id}/tables/{self.id}/rows",
+            data=params, page_size=page_size, limit=limit,
+        ):
+            yield Row.from_json(item, document=doc, table=self)
+
+    def rows(
+        self, offset: str = None, limit: int = None, data: Dict = None, **kwargs
+    ) -> List[Row]:
         """
         Returns list of Table rows.
 
@@ -117,14 +167,23 @@ class Table(CodaObject):
 
         :param offset: An opaque token used to fetch the next page of results.
 
+        :param data: A dict of additional options/parameters to use in the query
+
+        Accepts the same keyword arguments as :meth:`iter_rows`.
+
         :return:
         """
-        return [
-            Row.from_json(i, document=self.document, table=self)
-            for i in self.document.coda.list_rows(
-                self.document.id, self.id, offset=offset, limit=limit, data=data
-            )["items"]
-        ]
+        if offset is not None:
+            # The historical signature: one page, starting from a token.
+            params = dict(data or {})
+            params.setdefault("useColumnNames", kwargs.get("use_column_names", False))
+            return [
+                Row.from_json(i, document=self.document, table=self)
+                for i in self.document.coda.list_rows(
+                    self.document.id, self.id, offset=offset, limit=limit, data=params
+                )["items"]
+            ]
+        return list(self.iter_rows(limit=limit, data=data, **kwargs))
 
     def get_row_by_id(self, row_id: str) -> Row:
         row_js = self.document.coda.get_row(self.document.id, self.id, row_id)
@@ -268,22 +327,41 @@ class Table(CodaObject):
 
     def upsert_row(
         self, cells: List[Cell], key_columns: List[Union[str, Column]] = None
-    ) -> Dict:
+    ) -> Mutation:
         """
         Upsert a Table row using a list of `Cell` objects optionally updating existing rows.
 
         :param cells: list of `Cell` objects.
         :param key_columns: list of `Column` objects, column IDs, URLs, or names
             specifying columns to be used as upsert keys.
+
+        :return: a `Mutation`. The write is accepted, not yet applied -- call
+            `.wait()` when you need it to have landed.
         """
 
         return self.upsert_rows([cells], key_columns)
+
+    def _cell_payload(self, cell: Cell) -> Dict:
+        """
+        One cell as the API wants it, with the column checked and the value made
+        JSON-safe.
+
+        Resolving the column here rather than passing the string on means a typo
+        is an error, not a 400 from the server describing a column you did not
+        mean to name. A URL is left alone, since the API accepts one and codaio
+        cannot resolve it locally.
+        """
+        column = self.resolve_column(cell.column)
+        return {
+            "column": column if isinstance(column, str) else column.id,
+            "value": serialize(cell.raw_value),
+        }
 
     def upsert_rows(
         self,
         rows: List[List[Cell]],
         key_columns: List[Union[str, Column]] = None,
-    ) -> Dict:
+    ) -> Mutation:
         """
         Upsert multiple Table rows optionally updating existing rows.
 
@@ -293,45 +371,44 @@ class Table(CodaObject):
         :param rows: list of lists of `Cell` objects, one list for each row.
         :param key_columns: list of `Column` objects, column IDs, URLs, or names
             specifying columns to be used as upsert keys.
+
+        :return: a `Mutation`. With no key columns its `.row_ids` are the rows
+            that will be added; with key columns the API cannot say in advance
+            which rows an upsert will touch, so it reports none.
         """
         data = {
             "rows": [
-                {
-                    "cells": [
-                        {"column": cell.column_id_or_name, "value": cell.value}
-                        for cell in row
-                    ]
-                }
+                {"cells": [self._cell_payload(cell) for cell in row]}
                 for row in rows
             ]
         }
 
         if key_columns:
-            if not isinstance(key_columns, list):
+            if isinstance(key_columns, (str, Column)) or not isinstance(
+                key_columns, (list, tuple)
+            ):
                 raise err.ColumnNotFound(
-                    f"key_columns parameter '{key_columns}' is not a list."
+                    f"key_columns must be a list of columns, got {key_columns!r}"
                 )
+            resolved = [self.resolve_column(column) for column in key_columns]
+            data["keyColumns"] = [
+                column if isinstance(column, str) else column.id
+                for column in resolved
+            ]
 
-            data["keyColumns"] = []
+        return Mutation.from_response(
+            self.document.coda,
+            self.document.coda.upsert_row(self.document.id, self.id, data),
+        )
 
-            for key_column in key_columns:
-                if isinstance(key_column, Column):
-                    data["keyColumns"].append(key_column.id)
-                elif isinstance(key_column, str):
-                    data["keyColumns"].append(key_column)
-                else:
-                    raise err.ColumnNotFound(
-                        f"Invalid parameter: '{key_column}' in key_columns."
-                    )
-
-        return self.document.coda.upsert_row(self.document.id, self.id, data)
-
-    def update_row(self, row: Union[str, Row], cells: List[Cell]) -> Dict:
+    def update_row(self, row: Union[str, Row], cells: List[Cell]) -> Mutation:
         """
         Updates row with values according to list in cells.
 
         :param row: a str ROW_ID or an instance of class Row
         :param cells: list of `Cell` objects.
+
+        :return: a `Mutation`.
         """
         if isinstance(row, Row):
             row_id = row.id
@@ -340,26 +417,25 @@ class Table(CodaObject):
         else:
             raise TypeError("row must be str ROW_ID or an instance of Row")
 
-        data = {
-            "row": {
-                "cells": [
-                    {"column": cell.column_id_or_name, "value": cell.value}
-                    for cell in cells
-                ]
-            }
-        }
+        data = {"row": {"cells": [self._cell_payload(cell) for cell in cells]}}
 
-        return self.document.coda.update_row(self.document.id, self.id, row_id, data)
+        return Mutation.from_response(
+            self.document.coda,
+            self.document.coda.update_row(self.document.id, self.id, row_id, data),
+        )
 
-    def delete_row_by_id(self, row_id: str):
+    def delete_row_by_id(self, row_id: str) -> Mutation:
         """
         Deletes row by id.
 
         :param row_id: ID of the row to delete.
         """
-        return self.document.coda.delete_row(self.document.id, self.id, row_id)
+        return Mutation.from_response(
+            self.document.coda,
+            self.document.coda.delete_row(self.document.id, self.id, row_id),
+        )
 
-    def delete_row(self, row: Row) -> Dict:
+    def delete_row(self, row: Row) -> Mutation:
         """
         Delete row.
 
@@ -368,11 +444,47 @@ class Table(CodaObject):
 
         return self.delete_row_by_id(row.id)
 
-    def to_dict(self) -> List[Dict]:
+    def delete_rows(
+        self, rows: Iterable[Union[str, Row]], *, chunk: int = 1000
+    ) -> MutationGroup:
+        """
+        Delete many rows, in as few requests as the chunk size allows.
+
+        :param rows: `Row` objects or row ids.
+
+        :param chunk: how many ids to send per request.
+
+        :return: a `MutationGroup` -- one mutation per request made.
+        """
+        row_ids = [row.id if isinstance(row, Row) else row for row in rows]
+        if not row_ids:
+            raise err.InvalidQuery(
+                "delete_rows was given no rows. If a filter produced that empty "
+                "list, deleting nothing is unlikely to be what was meant."
+            )
+
+        coda = self.document.coda
+        mutations = [
+            Mutation.from_response(
+                coda,
+                coda.delete_rows(self.document.id, self.id, row_ids[at:at + chunk]),
+            )
+            for at in range(0, len(row_ids), chunk)
+        ]
+        return MutationGroup(mutations)
+
+    def to_dict(self, *, value_format: str = "simpleWithArrays") -> List[Dict]:
         """
         Returns entire table as list of dicts. Intended for use with pandas:
 
         pd.DataFrame(table.to_dict())
+
+        Reads with `simpleWithArrays` rather than the API's `simple` default,
+        which joins array values -- multiselects, multiple attachments -- into a
+        comma-delimited string that cannot be taken apart again once any value
+        contains a comma. Not `rich` either: that returns value objects, which
+        are the right thing to hold in Python and the wrong thing to put in a
+        DataFrame. Pass `value_format="rich"` when you want them anyway.
 
         The dicts are ragged: a row omits any column it carries no value for,
         rather than inventing one. `DataFrame` unions the keys, so every column
@@ -380,7 +492,7 @@ class Table(CodaObject):
         genuinely empty arrives as the empty value the API sent. Filling `None`
         here would collapse those two into the same thing.
         """
-        return [row.to_dict() for row in self.rows()]
+        return [row.to_dict() for row in self.rows(value_format=value_format)]
 
 
 @attr.s(auto_attribs=True, eq=False, repr=False)
@@ -503,12 +615,35 @@ class Row(CodaObject):
 
     def __setitem__(self, item, value) -> Cell:
         cell = self.__getitem__(item)
-        data = {"row": {"cells": [{"column": cell.column.id, "value": value}]}}
-        self.document.coda.update_row(
-            self.document.id, self.table.id, self.id, data=data
+        self.table.update_row(self, [Cell(cell.column, value)])
+        # Update this row's own values too. `cells()` rebuilds Cell objects from
+        # `values` every time it is called, so writing to the returned cell alone
+        # left the row still reporting the old value.
+        column_id = cell.column.id if isinstance(cell.column, Column) else cell.column
+        self.values = tuple(
+            (key, serialize(value) if key == column_id else held)
+            for key, held in self.values
         )
-        cell.value_storage = value
-        return cell
+        return self[item]
+
+    def push_button(self, column: Union[str, Column]) -> Mutation:
+        """
+        Press a button in this row, as clicking it would.
+
+        Never retried automatically: a button can do anything its author wrote
+        into it, including writing to other tables or calling a Pack action, so
+        pressing it twice is not known to be harmless.
+
+        :param column: the button column, as a `Column`, an id, or a name.
+        """
+        resolved = self.table.resolve_column(column)
+        column_id = resolved if isinstance(resolved, str) else resolved.id
+        return Mutation.from_response(
+            self.table.document.coda,
+            self.table.document.coda.push_button(
+                self.table.document.id, self.table.id, self.id, column_id
+            ),
+        )
 
     def to_dict(self) -> Dict:
         """
@@ -631,35 +766,34 @@ class Cell:
 
     @value.setter
     def value(self, value):
-        data = {
-            "row": {
-                "cells": [
-                    {"column": self.column_id_or_name, "value": serialize(value)}
-                ]
-            }
-        }
-        self.document.coda.update_row(
-            self.document.id, self.table.id, self.row.id, data=data
-        )
-        self.value_storage = serialize(value)
+        self.set(value)
 
-        # Writes are applied asynchronously, so the value is not readable back
-        # immediately. This waits for it, but only for a while: the loop used to
-        # have no bound at all, and it compares what the API stored rather than
-        # what was sent, because Coda coerces values to the column's format
-        # ("$12.34" becomes 12.34, dates are reformatted) and an exact match may
-        # never arrive. Phase-appropriate stopgap: `mutationStatus` is the right
-        # primitive and replaces this.
-        deadline = time.monotonic() + _WRITE_SETTLE_TIMEOUT
-        while time.monotonic() < deadline:
+    def set(self, value, *, wait: bool = True, timeout: float = 60.0) -> Mutation:
+        """
+        Write this cell.
+
+        With `wait=True` this blocks until the API reports the edit dealt with
+        and then re-reads the row, so `.value` afterwards is what Coda actually
+        stored -- which may differ from what you wrote, because values are
+        coerced to the column's format ("$12.34" becomes 12.34, dates are
+        reformatted, a select option is normalised).
+
+        That difference is why this no longer waits by comparing the two. The
+        old loop re-read the row until it matched what was sent, with no bound at
+        all, so any coerced value spun forever. `mutationStatus` answers the
+        question that was actually being asked.
+
+        :param wait: set False for bulk work and wait on the returned `Mutation`
+            yourself, or not at all.
+        """
+        mutation = self.row.table.update_row(self.row, [Cell(self.column, value)])
+        if wait:
+            mutation.wait(timeout=timeout)
             self.row.refresh()
-            settled = self.row.get_cell_by_column_id(self.column_id_or_name)
-            if settled.raw_value == self.value_storage:
-                return
-            time.sleep(0.3)
-        raise err.MutationTimeout(
-            f"wrote {self.name!r} on row {self.row.id!r} but the new value was "
-            f"not readable back within {_WRITE_SETTLE_TIMEOUT:g}s. The edit was "
-            f"accepted and may still be applied; Coda also coerces values to the "
-            f"column's format, so what it stores may differ from what was sent."
-        )
+            column_id = (
+                self.column.id if isinstance(self.column, Column) else self.column
+            )
+            self.value_storage = dict(self.row.values).get(column_id)
+        else:
+            self.value_storage = serialize(value)
+        return mutation

@@ -89,21 +89,20 @@ class TestRowMutation:
         assert len(puts) == 1
         assert b"new value" in puts[0].request.body
 
-    def test_setitem_does_not_update_the_row_in_place(self, main_table):
+    def test_setitem_updates_the_row_in_place(self, main_table):
         """
-        Current behaviour, pinned rather than endorsed.
+        Assigning to a cell used to change nothing you could read back.
 
-        `__setitem__` assigns to `cell.value_storage`, but `Row.cells()`
-        builds fresh `Cell` objects out of `Row.values` on every call, so it
-        is mutating a throwaway. `Row.values` is untouched and a read-back
-        still shows the old value until `refresh()` is called.
+        `__setitem__` assigned to `cell.value_storage`, but `Row.cells()` builds
+        fresh `Cell` objects out of `Row.values` on every call -- so it was
+        mutating a throwaway, and a read-back still showed the old value until
+        `refresh()` was called. `Row.values` is updated now.
         """
         row = main_table.rows()[0]
-        before = row["column_id"].value
 
         row["column_id"] = "new value"
 
-        assert row["column_id"].value == before
+        assert row["column_id"].value == "new value"
 
     def test_setitem_on_unknown_column_raises(self, main_table):
         with pytest.raises((KeyError, err.ColumnNotFound)):

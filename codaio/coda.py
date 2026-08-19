@@ -20,6 +20,7 @@ from codaio.objects.page import (  # noqa
     PageTree,
     SyncPageContent,
 )
+from codaio.objects.mutation import Mutation, MutationGroup  # noqa: F401
 from codaio.objects.table import Cell, Column, Row, Table  # noqa: F401
 
 

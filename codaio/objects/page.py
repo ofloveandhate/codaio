@@ -28,6 +28,7 @@ from dateutil.parser import parse
 from codaio import err
 from codaio.http import fetch_untrusted
 from codaio.objects.base import CodaObject, PageReference, Reference, ref, refs
+from codaio.objects.mutation import Mutation
 
 
 #: What a page's content is. A canvas holds editable content; an embed wraps an
@@ -398,7 +399,7 @@ class Page(CodaObject):
         icon_name: str = None,
         image_url: str = None,
         is_hidden: bool = None,
-    ) -> Dict:
+    ) -> Mutation:
         """
         Change the page's title, subtitle, icon, cover or hidden flag.
 
@@ -414,28 +415,34 @@ class Page(CodaObject):
                 data[key] = value
         if not data:
             raise err.InvalidQuery("update() was given nothing to change")
-        return self.document.coda.update_page(self.document.id, self.id, data)
+        return Mutation.from_response(
+            self.document.coda,
+            self.document.coda.update_page(self.document.id, self.id, data),
+        )
 
-    def _content_update(self, mode: str, content, element_id: str = None) -> Dict:
+    def _content_update(self, mode: str, content, element_id: str = None) -> Mutation:
         if isinstance(content, str):
             content = CanvasContent(content)
         payload = content.to_json()["canvasContent"]
         update = {"insertionMode": mode, "canvasContent": payload}
         if element_id:
             update["elementId"] = element_id
-        return self.document.coda.update_page(
-            self.document.id, self.id, {"contentUpdate": update}
+        return Mutation.from_response(
+            self.document.coda,
+            self.document.coda.update_page(
+                self.document.id, self.id, {"contentUpdate": update}
+            ),
         )
 
-    def append(self, content: Union[str, CanvasContent], *, element_id: str = None) -> Dict:
+    def append(self, content: Union[str, CanvasContent], *, element_id: str = None) -> Mutation:
         """Add content at the end of the page, or after `element_id`."""
         return self._content_update("append", content, element_id)
 
-    def prepend(self, content: Union[str, CanvasContent], *, element_id: str = None) -> Dict:
+    def prepend(self, content: Union[str, CanvasContent], *, element_id: str = None) -> Mutation:
         """Add content at the start of the page, or before `element_id`."""
         return self._content_update("prepend", content, element_id)
 
-    def replace(self, content: Union[str, CanvasContent], *, element_id: str = None) -> Dict:
+    def replace(self, content: Union[str, CanvasContent], *, element_id: str = None) -> Mutation:
         """
         Replace the page's content, or just `element_id`'s.
 
@@ -443,7 +450,7 @@ class Page(CodaObject):
         """
         return self._content_update("replace", content, element_id)
 
-    def delete_content(self, element_ids: List[str] = None) -> Dict:
+    def delete_content(self, element_ids: List[str] = None) -> Mutation:
         """
         Delete specific elements from the page.
 
@@ -451,17 +458,26 @@ class Page(CodaObject):
         same as none at all, and would delete the entire page's content. Use
         :meth:`clear_content` when that is what you mean.
         """
-        return self.document.coda.delete_page_content(
-            self.document.id, self.id, element_ids
+        return Mutation.from_response(
+            self.document.coda,
+            self.document.coda.delete_page_content(
+                self.document.id, self.id, element_ids
+            ),
         )
 
-    def clear_content(self) -> Dict:
+    def clear_content(self) -> Mutation:
         """Delete all of the page's content, explicitly."""
-        return self.document.coda.delete_page_content(self.document.id, self.id, None)
+        return Mutation.from_response(
+            self.document.coda,
+            self.document.coda.delete_page_content(self.document.id, self.id, None),
+        )
 
-    def delete(self) -> Dict:
+    def delete(self) -> Mutation:
         """Delete the page."""
-        return self.document.coda.delete_page(self.document.id, self.id)
+        return Mutation.from_response(
+            self.document.coda,
+            self.document.coda.delete_page(self.document.id, self.id),
+        )
 
     def refresh(self) -> "Page":
         """Re-read the page from the API."""

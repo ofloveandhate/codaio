@@ -12,7 +12,7 @@ def mock_table_responses(mock_json_responses):
         ("columns", "get_columns.json", {}),
         ("column/column_id", "get_column.json", {}),
         ("rows/index_id", "get_row.json", {}),
-        ("rows", "empty.json", {"method": "POST"}),
+        ("rows", "upsert_result.json", {"method": "POST", "status": 202}),
         ("rows?useColumnNames=False", "get_added_rows.json", {}),
         ("rows/index_id", "empty.json", {"method": "DELETE"}),
         (
@@ -60,7 +60,8 @@ class TestTable:
         cell_1 = Cell(columns[0], f"value-{columns[0].name}")
         cell_2 = Cell(columns[1], f"value-{columns[1].name}")
         result = main_table.upsert_row([cell_1, cell_2])
-        assert result["status"] == 200
+        assert result.request_id == "abc-123-def-456"
+        assert result.row_ids == ["i-added-1", "i-added-2"]
         rows = main_table.find_row_by_column_id_and_value(
             cell_1.column.id, cell_1.value
         )
@@ -84,7 +85,9 @@ class TestTable:
                 for row in range(1, 6)
             ]
         )
-        assert result["status"] == 200
+        # a write is accepted, not applied: the API answers 202 with a request id
+        assert result.request_id == "abc-123-def-456"
+        assert not result.completed
 
         saved_rows = main_table.rows()
 
@@ -102,7 +105,7 @@ class TestTable:
             ]
         )
 
-        assert result["status"] == 200
+        assert result.request_id == "abc-123-def-456"
 
         cell_to_update_1 = Cell(key_column, f"value-5-{columns[0].name}")
         cell_to_update_2 = Cell(columns[1], "updated_value")
@@ -111,7 +114,7 @@ class TestTable:
 
         result = main_table.upsert_rows([row_to_update], key_columns=[key_column])
 
-        assert result["status"] == 200
+        assert result.request_id == "abc-123-def-456"
         updated_rows = main_table.find_row_by_column_id_and_value(
             cell_to_update_1.column.id, cell_to_update_1.value
         )

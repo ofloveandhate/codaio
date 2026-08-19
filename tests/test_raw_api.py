@@ -39,6 +39,14 @@ CALLS = {
     "list_rows": {"doc_id": "d1", "table_id_or_name": "t1"},
     "get_row": {"doc_id": "d1", "table_id_or_name": "t1", "row_id_or_name": "r1"},
     "delete_row": {"doc_id": "d1", "table_id_or_name": "t1", "row_id_or_name": "r1"},
+    "delete_rows": {
+        "doc_id": "d1", "table_id_or_name": "t1", "row_ids": ["i-1", "i-2"],
+    },
+    "push_button": {
+        "doc_id": "d1", "table_id_or_name": "t1", "row_id_or_name": "i-1",
+        "column_id_or_name": "c-1",
+    },
+    "get_mutation_status": {"request_id": "req-1"},
     "list_formulas": {"doc_id": "d1"},
     "get_formula": {"doc_id": "d1", "formula_id_or_name": "fx"},
     "list_controls": {"doc_id": "d1"},

@@ -18,6 +18,13 @@ def mock_meta_responses(mock_json_responses):
     base_table_url = BASE_URL + "/docs/doc_id/tables/table_id/"
     responses = [
         ("rows?useColumnNames=False", "get_rows.json", {}),
+        # Table.to_dict reads with simpleWithArrays rather than the API's lossy
+        # `simple` default, so it asks for a different URL.
+        (
+            "rows?useColumnNames=False&valueFormat=simpleWithArrays",
+            "get_rows.json",
+            {},
+        ),
         ("columns", "get_columns.json", {}),
         ("rows/index_id", "get_row.json", {}),
     ]

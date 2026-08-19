@@ -26,6 +26,7 @@ from .objects.page import (  # noqa
     PageTree,
     SyncPageContent,
 )
+from .objects.mutation import Mutation, MutationGroup  # noqa
 from .objects.table import Cell, Column, Row, Table  # noqa
 from .values import (  # noqa
     CodaValue,

@@ -14,6 +14,7 @@ from dateutil.parser import parse
 from codaio import err
 from codaio.client import Coda
 from codaio.objects.base import CodaObject
+from codaio.objects.mutation import Mutation
 from codaio.objects.page import Page, PageTree, _content_payload
 from codaio.objects.table import Table
 
@@ -174,7 +175,7 @@ class Document:
         image_url: str = None,
         parent_page=None,
         content=None,
-    ) -> Dict:
+    ) -> Mutation:
         """
         Creates a page in this doc.
 
@@ -200,7 +201,9 @@ class Document:
         payload = _content_payload(content)
         if payload is not None:
             data["pageContent"] = payload
-        return self.coda.create_page(self.id, data)
+        return Mutation.from_response(
+            self.coda, self.coda.create_page(self.id, data)
+        )
 
     def list_sections(self, offset: str = None, limit: int = None) -> List[Page]:
         """Deprecated. Use :meth:`list_pages`."""
